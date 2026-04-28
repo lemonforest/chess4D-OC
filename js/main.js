@@ -1951,6 +1951,17 @@ function selectPiece(mesh) {
     // Show possible moves (with canRayCast=true so they can be clicked)
     if (possibleMoves && possibleMoves.length > 0) {
         gameBoard.graphics.showPossibleMoves(possibleMoves, piece, {}, true);
+        // M5: fire spectral preview for the selected origin. Re-tints the
+        // already-rendered destinations once intensities arrive. Falls
+        // back silently when the encoder isn't installed.
+        if (window.SpectralOverlay && typeof window.SpectralOverlay.onPieceSelected === 'function') {
+            window.SpectralOverlay.onPieceSelected({
+                x: boardCoords.x,
+                y: boardCoords.y,
+                z: boardCoords.z,
+                w: boardCoords.w,
+            });
+        }
     } else {
         gameBoard.graphics.hidePossibleMoves();
     }

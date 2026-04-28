@@ -1665,3 +1665,45 @@ body {
 #engine-debug-status.engine-debug-status--visible {
     display: block;
 }
+
+/* ============================================
+   SPECTRAL OVERLAY CONTROL (M5)
+   ============================================ */
+.spectral-card .spectral-control {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+.spectral-card .spectral-control label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+.spectral-card .spectral-control select {
+    flex: 1;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--bg-tertiary);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 13px;
+    font-family: inherit;
+}
+.spectral-card .spectral-control select:focus {
+    outline: 1px solid var(--accent-primary);
+    border-color: var(--accent-primary);
+}
+.spectral-card .spectral-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin: 0;
+    line-height: 1.4;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.spectral-card .spectral-hint.spectral-hint--ready {
+    color: var(--accent-success);
+}
+.spectral-card .spectral-hint.spectral-hint--unavailable {
+    color: var(--accent-warning);
+}

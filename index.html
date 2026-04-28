@@ -21,6 +21,11 @@
          and chess4d, sets window.__SMOKE_READY__ when done. Kicked off
          here so cold-boot runs in parallel with Three.js + OBJ loading. -->
     <script src="js/spectral_bridge.js"></script>
+
+    <!-- Spectral overlay (M5): wires the channel selector to bridge.previewEncoding
+         and re-tints existing destination meshes by intensity. Loads after the
+         bridge so window.SpectralBridge is available, but runs after page load. -->
+    <script src="js/spectral_overlay.js" defer></script>
 </head>
 <body>
     <!-- Engine loading overlay — blocks UI until spectral_bridge.init() resolves. -->
@@ -110,6 +115,21 @@
                 </ul>
             </section>
             
+            <!-- Spectral Overlay (M5+) -->
+            <section class="card spectral-card">
+                <h3>Spectral Overlay</h3>
+                <div class="spectral-control">
+                    <label for="spectral-channel">Channel:</label>
+                    <select id="spectral-channel" aria-label="Spectral channel for hover overlay">
+                        <option value="off">Off</option>
+                        <option value="A1" selected>A1 (overall complexity)</option>
+                        <option value="B2">B2 (diagonal-orbit anisotropy)</option>
+                        <option value="FA">FA (pawn-anti)</option>
+                    </select>
+                </div>
+                <p class="spectral-hint" id="spectral-hint">Engine loading&hellip;</p>
+            </section>
+
             <!-- Action Buttons -->
             <section class="card actions-card">
                 <h3>Actions</h3>

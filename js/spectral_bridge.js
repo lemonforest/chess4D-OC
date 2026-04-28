@@ -68,6 +68,68 @@
     return p;
   }
 
+  // M5 hover coalescer — single in-flight previewEncoding plus a single
+  // queued one. New hover requests replace the queued one; older queued
+  // promises resolve to the most-recent result. This stops backpressure
+  // when hovering across many pieces faster than encode_4d can run.
+  let previewInFlight = null;
+  let previewQueued = null;
+  function previewCoalesced(origin) {
+    if (previewInFlight === null) {
+      previewInFlight = applyChain
+        .then(() => call('previewEncoding', origin))
+        .finally(() => {
+          previewInFlight = null;
+          if (previewQueued) {
+            const next = previewQueued;
+            previewQueued = null;
+            next.start();
+          }
+        });
+      return previewInFlight;
+    }
+    // There is already one in flight — supersede the queued one.
+    if (previewQueued) {
+      previewQueued.cancel(new Error('superseded'));
+    }
+    let resolveOuter, rejectOuter;
+    const outer = new Promise((res, rej) => {
+      resolveOuter = res;
+      rejectOuter = rej;
+    });
+    previewQueued = {
+      origin,
+      start() {
+        previewInFlight = applyChain
+          .then(() => call('previewEncoding', origin))
+          .then(
+            (v) => {
+              previewInFlight = null;
+              if (previewQueued) {
+                const next = previewQueued;
+                previewQueued = null;
+                next.start();
+              }
+              resolveOuter(v);
+            },
+            (e) => {
+              previewInFlight = null;
+              if (previewQueued) {
+                const next = previewQueued;
+                previewQueued = null;
+                next.start();
+              }
+              rejectOuter(e);
+            }
+          );
+      },
+      cancel(err) {
+        rejectOuter(err);
+      },
+    };
+    return outer;
+  }
+
   const bridge = {
     init: () => call('init'),
     getStatus: () => call('getStatus'),
@@ -79,6 +141,10 @@
     undo: () => chained('undo'),
     resetToInitial: () => chained('resetToInitial'),
     legalMoves: (origin) => applyChain.then(() => call('legalMoves', origin)),
+
+    // M5 hover spectral preview — debounced via the hover-coalescing
+    // pattern (one in-flight + one queued, replace queued on new hover).
+    previewEncoding: (origin) => previewCoalesced(origin),
 
     // M3.5 parity helpers — kept for the parity harness. listInitialPieces
     // is still the cleanest way to enumerate the canonical starting position.

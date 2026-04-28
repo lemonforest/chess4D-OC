@@ -359,6 +359,217 @@ result
       .toJs({ dict_converter: Object.fromEntries, depth: 4 });
   },
 
+  // M5 hover spectral preview — for each legal destination from `origin`,
+  // applies the move to a temp state, runs encode_4d, and extracts the
+  // intensity at the destination cell across all available channels.
+  //
+  // Slow on v0.1: O(legal_moves * encoder_time). 80-move queens can take
+  // a few seconds in Pyodide. M6 replaces the per-move re-encode with a
+  // phase-shift delta on a cached current-state encoding.
+  //
+  // Gracefully returns ok=false when the encoder isn't installed yet
+  // (chess-spectral wheel pending). JS falls back to default rendering.
+  previewEncoding(args) {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    const x = args.x, y = args.y, z = args.z, w = args.w;
+    pyodide.globals.set('_origin_x', x);
+    pyodide.globals.set('_origin_y', y);
+    pyodide.globals.set('_origin_z', z);
+    pyodide.globals.set('_origin_w', w);
+    return pyodide
+      .runPython(
+        `
+import chess4d
+try:
+    _move_history
+except NameError:
+    _move_history = []
+
+origin = (int(_origin_x), int(_origin_y), int(_origin_z), int(_origin_w))
+
+# Try to load encoder + channel names. Both are best-effort; missing is OK.
+encode_4d = None
+encoder_err = None
+try:
+    from chess_spectral.encoder_4d import encode_4d
+except Exception as e:
+    encoder_err = f'{type(e).__name__}: {e}'
+
+CHANNEL_NAMES = None
+try:
+    from chess_spectral.encoder_4d import CHANNEL_NAMES as _CN
+    CHANNEL_NAMES = list(_CN)
+except Exception:
+    try:
+        # Some chess-spectral versions expose channel names elsewhere.
+        from chess_spectral import CHANNEL_NAMES as _CN
+        CHANNEL_NAMES = list(_CN)
+    except Exception:
+        CHANNEL_NAMES = None
+
+def _try_apply(state, o, d):
+    for fn_name in ('apply_move', 'make_move', 'move', 'do_move', 'push'):
+        fn = getattr(state, fn_name, None)
+        if callable(fn):
+            try:
+                r = fn(o, d)
+                return r if r is not None else state
+            except TypeError:
+                try:
+                    r = fn((o, d))
+                    return r if r is not None else state
+                except Exception:
+                    continue
+            except Exception:
+                continue
+    raise RuntimeError('apply-move api missing')
+
+def _piece_at(s, coords):
+    if hasattr(s, 'board'):
+        b = s.board
+        for fn in ('get_piece', 'piece_at', 'at'):
+            f = getattr(b, fn, None)
+            if callable(f):
+                try:
+                    return f(*coords)
+                except TypeError:
+                    try:
+                        return f(coords)
+                    except Exception:
+                        pass
+        if hasattr(b, 'pieces'):
+            for p in b.pieces:
+                pos = (
+                    getattr(p, 'x', None), getattr(p, 'y', None),
+                    getattr(p, 'z', None), getattr(p, 'w', None),
+                )
+                if pos == coords:
+                    return p
+    if hasattr(s, 'pieces'):
+        for p in s.pieces:
+            pos = (
+                getattr(p, 'x', None), getattr(p, 'y', None),
+                getattr(p, 'z', None), getattr(p, 'w', None),
+            )
+            if pos == coords:
+                return p
+    return None
+
+# Rebuild current state from history.
+state = chess4d.initial_position()
+for (o, d) in _move_history:
+    try:
+        state = _try_apply(state, o, d)
+    except Exception:
+        pass
+
+piece = _piece_at(state, origin)
+if piece is None:
+    result = {'ok': False, 'reason': 'no-piece-at-origin', 'previews': []}
+elif encode_4d is None:
+    # No encoder yet — return the legal destinations with null intensities
+    # so the JS path can still render destinations (just without overlay).
+    moves_list = []
+    try:
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import occupation_aware_moves_a_4d
+        moves_list = list(occupation_aware_moves_a_4d(state, origin, piece))
+    except Exception:
+        try:
+            all_legal = chess4d.legal_moves(state)
+            moves_list = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
+        except Exception:
+            moves_list = []
+    previews = []
+    for m in moves_list:
+        try:
+            t = tuple(m)[:4]
+        except TypeError:
+            t = (
+                getattr(m, 'x', None), getattr(m, 'y', None),
+                getattr(m, 'z', None), getattr(m, 'w', None),
+            )
+        if all(v is not None for v in t):
+            previews.append({
+                'dest': {'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])},
+                'intensities': None,
+            })
+    result = {
+        'ok': False,
+        'reason': f'encoder unavailable: {encoder_err}',
+        'channels': None,
+        'previews': previews,
+    }
+else:
+    # Get legal destinations.
+    moves_list = []
+    try:
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import occupation_aware_moves_a_4d
+        moves_list = list(occupation_aware_moves_a_4d(state, origin, piece))
+    except Exception:
+        try:
+            all_legal = chess4d.legal_moves(state)
+            moves_list = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
+        except Exception:
+            moves_list = []
+
+    # For each dest, apply -> encode -> extract intensity at the dest cell
+    # across all channels. Cell index uses the standard row-major
+    # (x*512 + y*64 + z*8 + w) ordering — confirmed by chess_spectral's
+    # PHI_TO_XYZW reverse mapping when x is most-significant.
+    previews = []
+    channel_count = None
+    for m in moves_list:
+        try:
+            t = tuple(m)[:4]
+        except TypeError:
+            t = (
+                getattr(m, 'x', None), getattr(m, 'y', None),
+                getattr(m, 'z', None), getattr(m, 'w', None),
+            )
+        if not all(v is not None for v in t):
+            continue
+        dest = {'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])}
+        try:
+            temp_state = _try_apply(state, origin, t)
+            vec = encode_4d(temp_state)
+            n = len(vec)
+            ch_dim = 4096
+            n_channels = n // ch_dim
+            channel_count = n_channels
+            cell_idx = dest['x'] * 512 + dest['y'] * 64 + dest['z'] * 8 + dest['w']
+            intensities = {}
+            for ch in range(n_channels):
+                name = (
+                    CHANNEL_NAMES[ch]
+                    if (CHANNEL_NAMES is not None and ch < len(CHANNEL_NAMES))
+                    else f'ch{ch}'
+                )
+                intensities[name] = float(vec[ch * ch_dim + cell_idx])
+            previews.append({'dest': dest, 'intensities': intensities})
+        except Exception as e:
+            previews.append({
+                'dest': dest,
+                'intensities': None,
+                'error': f'{type(e).__name__}: {e}',
+            })
+
+    result = {
+        'ok': True,
+        'reason': None,
+        'channels': CHANNEL_NAMES if CHANNEL_NAMES is not None else (
+            [f'ch{i}' for i in range(channel_count or 11)]
+        ),
+        'previews': previews,
+    }
+
+result
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
   // M3.5 parity helper: list every piece in the initial position so the
   // parity harness can iterate them and ask both engines for legal moves
   // at each square. Returns array of {x, y, z, w, type, team} dicts.
