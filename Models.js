@@ -116,7 +116,22 @@ const Models = {
         
     },
     
-    directory: 'js/pieces/obj_pieces/',
+    // M7a: Asset quality is selectable via the ?quality= URL flag.
+    // Defaults to "low" (decimated to ~20% triangles via tools/decimate_obj.py)
+    // because the original ~1M-triangle models crashed Chrome and the host
+    // OS on test hardware. To use the originals: append ?quality=high.
+    // The two directories are siblings under js/pieces/; both contain the
+    // same filenames (Pawn.obj, Rook.obj, ...). See docs/low-poly-assets.md.
+    directory: (function () {
+        var q = 'low';
+        try {
+            var p = new URLSearchParams(window.location.search).get('quality');
+            if (p === 'high' || p === 'low') q = p;
+        } catch (_) { /* no window — leave default */ }
+        return q === 'high'
+            ? 'js/pieces/obj_pieces/'
+            : 'js/pieces/obj_pieces_lowpoly/';
+    })(),
     
     pieceData: [
         {
