@@ -161,35 +161,86 @@ const Models = {
         }
     ],
     
+    // M7c: shared materials for the long-lived board pieces. The 896 pieces
+    // each used to allocate their own MeshStandardMaterial (~896 GPU state
+    // changes per frame); now they share four cached instances keyed on
+    // (team, side). Transient preview/overlay meshes (red, green, darkGreen
+    // configs from showPossibleMoves) keep per-instance materials so the
+    // M5 spectral overlay can mutate opacity per dest mesh without
+    // bleeding into other pieces.
+    _sharedMaterialCache: null,
+
+    _getSharedMaterial: function (materialConfig, isDoubleSide) {
+        // Lazy-init the cache on first call (after Models.materials is set up).
+        if (!Models._sharedMaterialCache) {
+            const enhance = function (cfg) {
+                return Object.assign({}, cfg, {
+                    roughness: 0.4,
+                    metalness: 0.1,
+                    envMapIntensity: 0.3,
+                });
+            };
+            const make = function (cfg, ds) {
+                const m = new THREE.MeshStandardMaterial(enhance(cfg));
+                if (ds) m.side = THREE.DoubleSide;
+                return m;
+            };
+            Models._sharedMaterialCache = {
+                black_front:  make(Models.materials.black, false),
+                black_double: make(Models.materials.black, true),
+                white_front:  make(Models.materials.white, false),
+                white_double: make(Models.materials.white, true),
+            };
+        }
+        // Identity-match against canonical configs.
+        if (materialConfig === Models.materials.black) {
+            return isDoubleSide
+                ? Models._sharedMaterialCache.black_double
+                : Models._sharedMaterialCache.black_front;
+        }
+        if (materialConfig === Models.materials.white) {
+            return isDoubleSide
+                ? Models._sharedMaterialCache.white_double
+                : Models._sharedMaterialCache.white_front;
+        }
+        return null; // signal: caller should allocate a per-instance material
+    },
+
     createMesh: function(piece, material, x=0, y=0, z=0, scale=1, canRayCast=true){
-        
+
         const pieceData = Models.pieceData[Models.pieceIndices[piece]]
         const geometry = Models.geometries[piece]
-        
+
         if (!geometry) {
             console.error(`❌ No geometry found for piece: ${piece}`);
             return null;
         }
-        
-        // VISUAL: Use MeshStandardMaterial for better quality (PBR rendering)
-        // StandardMaterial is slightly more expensive than Lambert but provides much better visuals
-        // It's still very performant and looks professional with proper roughness/metalness
-        const enhancedMaterial = Object.assign({}, material, {
-            roughness: 0.4,  // Slightly glossy (0 = mirror, 1 = matte)
-            metalness: 0.1,  // Slightly metallic for depth
-            envMapIntensity: 0.3  // Subtle environment reflections if envMap is added
-        });
-        const meshMaterial = new THREE.MeshStandardMaterial(enhancedMaterial);
-        
+
+        const isDoubleSide = (piece === 'pawn' || piece === 'bishop' || piece === 'queen');
+        let meshMaterial = Models._getSharedMaterial(material, isDoubleSide);
+        if (!meshMaterial) {
+            // Per-instance path for previews / custom configs (transparent overlays,
+            // spectral channels that need per-mesh opacity, etc.). Cheap because
+            // these meshes are short-lived (created and disposed per hover).
+            const enhancedMaterial = Object.assign({}, material, {
+                roughness: 0.4,
+                metalness: 0.1,
+                envMapIntensity: 0.3
+            });
+            meshMaterial = new THREE.MeshStandardMaterial(enhancedMaterial);
+            if (isDoubleSide) {
+                meshMaterial.side = THREE.DoubleSide;
+            }
+        }
+
         // REUSE geometry instead of cloning - saves massive amounts of memory!
-        // Three.js can efficiently render the same geometry multiple times with different transforms
-        // Only compute normals once if not already done
+        // Only compute normals once if not already done.
         if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) {
             geometry.computeVertexNormals();
         }
-        
+
         let mesh = new THREE.Mesh(geometry, meshMaterial);
-        
+
         mesh.position.set(0, 0, 0);
         mesh.rotation.set(pieceData.rotation.x, pieceData.rotation.y, pieceData.rotation.z);
         // Shadows disabled for performance
@@ -198,17 +249,17 @@ const Models = {
 
 		mesh.scale.set(Models.SCALE_FACTOR, Models.SCALE_FACTOR, Models.SCALE_FACTOR)
 		const height = new THREE.Box3().setFromObject(mesh).max.y;
-		
+
 		mesh.scale.multiplyScalar(scale)
         mesh.position.set(x, y, z)
 
-        // Per-piece fixes for inverted surfaces
-        if (piece === 'pawn' || piece === 'bishop' || piece === 'queen') {
-            mesh.material.side = THREE.DoubleSide;
-        }
-        
+        // Per-piece DoubleSide is now set on the shared material at cache
+        // creation time (and on the per-instance material above), so we
+        // don't mutate mesh.material.side here — that would bleed across
+        // shared-material users.
+
         mesh.canRayCast = canRayCast;
-        
+
         return mesh;
     },
     
