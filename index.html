@@ -11,21 +11,85 @@
     <!-- Styles -->
     <link rel="stylesheet" href="css/main.css">
     
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
-    <script src="js/tutorial.js"></script>
+    <!-- Three.js r184 (Apr 2026) — see docs/repo-setup.md for migration notes.
+         Loaded as ES modules via import map; legacy r128 examples/js/* paths
+         are not in r184. We expose THREE/OrbitControls/OBJLoader as globals
+         so the rest of the script-mode codebase doesn't need to change. -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three":         "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.min.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+      }
+    }
+    </script>
 
     <!-- Pyodide bridge: spawns the worker, micropip-installs chess-spectral
-         and chess4d, sets window.__SMOKE_READY__ when done. Kicked off
-         here so cold-boot runs in parallel with Three.js + OBJ loading. -->
+         and chess4d, sets window.__SMOKE_READY__ when done. No Three.js
+         dependency, so it can boot in parallel with the module loader. -->
     <script src="js/spectral_bridge.js"></script>
 
-    <!-- Spectral overlay (M5): wires the channel selector to bridge.previewEncoding
-         and re-tints existing destination meshes by intensity. Loads after the
-         bridge so window.SpectralBridge is available, but runs after page load. -->
-    <script src="js/spectral_overlay.js" defer></script>
+    <!-- Module loader: imports Three.js + addons, exposes them as globals,
+         then loads the rest of the (still script-mode) app code in order.
+         Replaces the previous in-body <script> chain. -->
+    <script type="module">
+      import * as THREE from 'three';
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+      import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
+      window.THREE = THREE;
+      window.OrbitControls = OrbitControls;
+      window.OBJLoader = OBJLoader;
+
+      const APP_SCRIPTS = [
+        'js/tutorial.js',
+        'js/pieces/Piece.js?v=3',
+        'js/pieces/Pawn.js?v=3',
+        'js/pieces/Rook.js?v=3',
+        'js/pieces/Bishop.js?v=3',
+        'js/pieces/Knight.js?v=3',
+        'js/pieces/Queen.js?v=3',
+        'js/pieces/King.js?v=3',
+        'GameBoard.js?v=5',
+        'MoveManager.js?v=3',
+        'Models.js?v=5',
+        'js/Animation.js',
+        'js/PieceMovement.js',
+        'js/Bot.js',
+        'js/comprehensiveTutorial.js',
+        'js/main.js?v=2',
+        'js/spectral_overlay.js',
+      ];
+
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src;
+          s.async = false; // preserve load order (browser still parses sequentially)
+          s.onload = resolve;
+          s.onerror = () => reject(new Error('Failed to load ' + src));
+          document.body.appendChild(s);
+        });
+      }
+
+      (async () => {
+        try {
+          for (const src of APP_SCRIPTS) {
+            await loadScript(src);
+          }
+          window.dispatchEvent(new Event('chess4d-app-ready'));
+          console.log('[m7b] Three.js r' + THREE.REVISION + ' + app scripts loaded');
+        } catch (err) {
+          console.error('[m7b] Script chain failed:', err);
+          const overlay = document.getElementById('engine-loading-overlay');
+          if (overlay) {
+            overlay.classList.add('engine-loading-overlay--error');
+            const detail = overlay.querySelector('.engine-loading-detail');
+            if (detail) detail.textContent = 'Script load failed: ' + err.message;
+          }
+        }
+      })();
+    </script>
 </head>
 <body>
     <!-- Engine loading overlay — blocks UI until spectral_bridge.init() resolves. -->
@@ -406,46 +470,22 @@
         </aside>
     </div>
 
-    <!-- Scripts -->
-    <!-- Piece classes (must load before GameBoard) -->
-    <script src="js/pieces/Piece.js?v=3"></script>
-    <script src="js/pieces/Pawn.js?v=3"></script>
-    <script src="js/pieces/Rook.js?v=3"></script>
-    <script src="js/pieces/Bishop.js?v=3"></script>
-    <script src="js/pieces/Knight.js?v=3"></script>
-    <script src="js/pieces/Queen.js?v=3"></script>
-    <script src="js/pieces/King.js?v=3"></script>
-    
-    <!-- Game logic -->
-    <script src="GameBoard.js?v=5"></script>
-    <script src="MoveManager.js?v=3"></script>
-    <script src="Models.js?v=5"></script>
-    
-    <!-- Animation system -->
-    <script src="js/Animation.js"></script>
-    
-    <!-- Piece movement handler -->
-    <script src="js/PieceMovement.js"></script>
-    
-    <!-- Bot AI -->
-    <script src="js/Bot.js"></script>
-    
-    <!-- Comprehensive Tutorial System -->
-    <script src="js/comprehensiveTutorial.js"></script>
-    
-    <!-- Main application -->
-    <script src="js/main.js?v=2"></script>
+    <!-- App scripts (Three.js-dependent) are now loaded by the <head> module
+         loader after THREE/OrbitControls/OBJLoader are exposed as globals.
+         See `APP_SCRIPTS` in the head <script type="module"> block. -->
 
     <!-- Debug status panel toggle: append ?debug=1 to the URL to show the
          engine status overlay (versions, constants, piece count). The
-         signal-ready (window.__SMOKE_READY__) is set by spectral_bridge.js. -->
+         signal-ready (window.__SMOKE_READY__) is set by spectral_bridge.js.
+         Listens for chess4d-app-ready so it runs after the dynamic-load
+         chain has populated the DOM with engine info. -->
     <script>
-      (function () {
+      window.addEventListener('chess4d-app-ready', function () {
         if (new URLSearchParams(location.search).get('debug') === '1') {
           var el = document.getElementById('engine-debug-status');
           if (el) el.classList.add('engine-debug-status--visible');
         }
-      })();
+      });
     </script>
 </body>
 </html>

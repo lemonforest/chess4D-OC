@@ -21,8 +21,11 @@
     pre#raw-output { max-height: 400px; overflow: auto; background: #1a1f3a; padding: 12px; border-radius: 4px; font-size: 11px; }
   </style>
 
-  <!-- Three.js + OBJLoader (some Piece classes may reference THREE globally) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Note: parity harness doesn't actually need Three.js. Piece subclasses
+       are pure JS — they don't reference THREE. We dropped the r128 CDN
+       tag in M7b when upgrading the live page to r184; if a future Piece
+       version starts depending on THREE, add it back as an import map +
+       module loader the same way index.html does. -->
 
   <!-- JS legality engine — same chain as the live app -->
   <script src="../js/pieces/Piece.js?v=3"></script>

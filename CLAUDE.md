@@ -9,7 +9,7 @@ The math is shipped via PyPI packages loaded into Pyodide at runtime. **This is 
 ## Stack
 
 - Vanilla JavaScript (no transpiler, no bundler)
-- Three.js r128 (CDN: `cdn.jsdelivr.net/npm/three@0.128.0/`)
+- Three.js r184 (CDN: `cdn.jsdelivr.net/npm/three@0.184.0/`, ES module via import map; M7b upgrade)
 - Pyodide (CDN: `cdn.jsdelivr.net/pyodide/v0.26.x/full/`) — added in M3
 - Cloudflare Pages (static hosting, native per-PR previews)
 - Playwright (CI smoke + parity harness, dev-dep only) — added in M2
@@ -46,7 +46,7 @@ Pyodide is the legality oracle and spectral encoder; JS handles rendering, input
 - **Hosting**: Cloudflare Pages (Git Integration, no build step). PR previews are automatic. `_headers` file at repo root carries COOP/COEP for SharedArrayBuffer readiness.
 - **Constants**: `MODULUS_4D`, generators, etc. are pulled from `chess_spectral.phase_operators_4d` at runtime. **Never hardcode them in JS** — the package is the source of truth.
 - **Worker library**: hand-rolled `{id, method, args}` postMessage envelope (~30 LOC). No Comlink.
-- **Three.js version**: r128 stays. Don't bundle a Three upgrade with this work.
+- **Three.js version**: r184 (April 2026), upgraded from r128 in M7b for the GC-allocation fix and BatchedMesh availability. Loaded as an ES module via import map; addons live under `three/addons/`. Pin to exactly `0.184.0` (not `latest`) — research flagged risk of regressions in r185+.
 
 ## Where the plan lives
 

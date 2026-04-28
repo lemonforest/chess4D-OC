@@ -223,7 +223,9 @@ const Models = {
                 reject(url);
             };
             
-			const loader = new THREE.OBJLoader(manager);
+			// r184: addons aren't attached to THREE namespace; OBJLoader is a
+			// global exposed by the index.html module loader.
+			const loader = new OBJLoader(manager);
 
 			let index = 0;
 			Models.pieceData.forEach(piece => {

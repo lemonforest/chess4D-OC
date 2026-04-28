@@ -587,8 +587,9 @@ function setupThreeJS() {
     renderer.stencil = false; // Disable stencil buffer (not needed)
     renderer.logarithmicDepthBuffer = false; // Disable logarithmic depth (faster)
     
-    // Add orbit controls (CAD-style)
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    // Add orbit controls (CAD-style). r184: addons aren't on THREE namespace;
+    // OrbitControls is a global from the index.html module loader.
+    controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0, 0);  // Will be updated after board is created
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
