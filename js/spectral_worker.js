@@ -116,6 +116,170 @@ except (ImportError, AttributeError):
       .toJs({ dict_converter: Object.fromEntries });
   },
 
+  // M3.5 parity helper: list every piece in the initial position so the
+  // parity harness can iterate them and ask both engines for legal moves
+  // at each square. Returns array of {x, y, z, w, type, team} dicts.
+  listInitialPieces() {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    return pyodide
+      .runPython(
+        `
+import chess4d
+state = chess4d.initial_position()
+
+# chess4d's piece-list shape varies; try the common attribute paths.
+def _iter_pieces(s):
+    for path in [('board', 'pieces'), ('pieces',), ('board',)]:
+        obj = s
+        for attr in path:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                break
+        if obj is not None:
+            try:
+                iter(obj)
+                return obj
+            except TypeError:
+                continue
+    return []
+
+def _piece_dict(p):
+    # Pieces commonly expose .x/.y/.z/.w (or .position tuple) and .team/.type
+    coords = None
+    for attr in ('position', 'square', 'pos'):
+        v = getattr(p, attr, None)
+        if v is not None:
+            try:
+                coords = tuple(v)[:4]
+                break
+            except TypeError:
+                pass
+    if coords is None:
+        coords = (
+            getattr(p, 'x', None), getattr(p, 'y', None),
+            getattr(p, 'z', None), getattr(p, 'w', None),
+        )
+    return {
+        'x': int(coords[0]) if coords[0] is not None else -1,
+        'y': int(coords[1]) if coords[1] is not None else -1,
+        'z': int(coords[2]) if coords[2] is not None else -1,
+        'w': int(coords[3]) if coords[3] is not None else -1,
+        'type': str(getattr(p, 'kind', getattr(p, 'piece_type', getattr(p, 'type', type(p).__name__)))),
+        'team': int(getattr(p, 'team', getattr(p, 'color', getattr(p, 'side', -1)))),
+    }
+
+[_piece_dict(p) for p in _iter_pieces(state)]
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // M3.5 parity helper: returns legal destinations for the piece at the
+  // given (x, y, z, w) in the initial position, as an array of
+  // {x, y, z, w} dicts. Uses chess_spectral.phase_operators_4d's
+  // occupation-aware oracle. Best-effort API discovery — chess-spectral's
+  // exact import path varies between releases; fall through alternatives.
+  legalMovesAtInitial(args) {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    const x = args.x, y = args.y, z = args.z, w = args.w;
+    pyodide.globals.set('_origin_x', x);
+    pyodide.globals.set('_origin_y', y);
+    pyodide.globals.set('_origin_z', z);
+    pyodide.globals.set('_origin_w', w);
+    return pyodide
+      .runPython(
+        `
+import chess4d
+state = chess4d.initial_position()
+origin = (int(_origin_x), int(_origin_y), int(_origin_z), int(_origin_w))
+
+# Find the piece at origin (best-effort across chess4d API shapes).
+def _piece_at(s, coords):
+    if hasattr(s, 'board'):
+        b = s.board
+        for fn in ('get_piece', 'piece_at', 'at'):
+            f = getattr(b, fn, None)
+            if callable(f):
+                try:
+                    return f(*coords)
+                except TypeError:
+                    try:
+                        return f(coords)
+                    except Exception:
+                        pass
+        if hasattr(b, 'pieces'):
+            for p in b.pieces:
+                pos = (
+                    getattr(p, 'x', None), getattr(p, 'y', None),
+                    getattr(p, 'z', None), getattr(p, 'w', None),
+                )
+                if pos == coords:
+                    return p
+    if hasattr(s, 'pieces'):
+        for p in s.pieces:
+            pos = (
+                getattr(p, 'x', None), getattr(p, 'y', None),
+                getattr(p, 'z', None), getattr(p, 'w', None),
+            )
+            if pos == coords:
+                return p
+    return None
+
+piece = _piece_at(state, origin)
+if piece is None:
+    result = {'ok': False, 'reason': 'no-piece-at-origin', 'moves': []}
+else:
+    # Try the canonical occupation-aware-moves API and fall through.
+    moves = None
+    err = None
+    try:
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import (
+            occupation_aware_moves_a_4d,
+        )
+        moves = occupation_aware_moves_a_4d(state, origin, piece)
+    except Exception as e:
+        err = f'occupation_aware_a_4d: {type(e).__name__}: {e}'
+    if moves is None:
+        try:
+            from chess_spectral import phase_operators_4d as po
+            moves = po.occupation_aware_moves_a_4d(state, origin, piece)
+        except Exception as e:
+            err = (err or '') + f' | po: {type(e).__name__}: {e}'
+    if moves is None:
+        # Last resort: chess4d's own legal_moves and filter by origin.
+        try:
+            all_legal = chess4d.legal_moves(state)
+            moves = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
+        except Exception as e:
+            err = (err or '') + f' | chess4d.legal_moves: {type(e).__name__}: {e}'
+
+    if moves is None:
+        result = {'ok': False, 'reason': err or 'unknown', 'moves': []}
+    else:
+        # Normalize destinations to [{x,y,z,w}, ...]
+        out = []
+        for m in moves:
+            try:
+                t = tuple(m)[:4]
+            except TypeError:
+                t = (
+                    getattr(m, 'x', None), getattr(m, 'y', None),
+                    getattr(m, 'z', None), getattr(m, 'w', None),
+                )
+            if all(v is not None for v in t):
+                out.append({'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])})
+        result = {'ok': True, 'reason': None, 'moves': out}
+
+result
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 4 });
+  },
+
   // Sanity check that chess4d.initial_position() works in Pyodide.
   // Returns the piece count (~896) and the type repr for diagnostics.
   getInitialPositionInfo() {

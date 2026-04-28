@@ -1,20 +1,16 @@
 # Cloudflare Pages headers — see https://developers.cloudflare.com/pages/configuration/headers/
 #
-# COOP/COEP enable SharedArrayBuffer in Workers. Pyodide doesn't strictly need
-# SAB for v0.1, but having the headers in place means M5/M6 perf optimizations
-# (e.g., transferring numpy buffers to the main thread without copies) won't
-# require a follow-up infra PR.
+# COEP intentionally OMITTED for now. The earlier `require-corp` value blocked
+# Pyodide's micropip fetches from PyPI on mobile (PyPI doesn't set CORP), which
+# manifested as an "engine crash" after the page loaded. Pyodide doesn't need
+# SharedArrayBuffer for v0.1; if M5/M6 needs SAB for fast worker→main numpy
+# transfers, switch to `Cross-Origin-Embedder-Policy: credentialless` (Chrome/
+# Firefox/Edge support it; Safari needs `require-corp` + a fetch proxy).
 
 /*
   Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp
-  Cross-Origin-Resource-Policy: same-origin
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-
-# Three.js, OBJLoader, and other CDN resources need cross-origin permissive policy
-# to be loadable under COEP. They're served with CORS headers from jsDelivr.
-# Pyodide CDN ditto. Browsers enforce this on a per-resource basis.
 
 /*.js
   Cache-Control: public, max-age=3600
