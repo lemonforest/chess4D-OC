@@ -2,6 +2,8 @@
 
 A mathematically rigorous implementation of four-dimensional chess on the discrete hypercubic lattice **{1,…,8}⁴**, built with **JavaScript** and **Three.js**.
 
+> **Fork notice — chess4D-OC**: this repository is a fork of [oanaunc/4d_chess](https://github.com/oanaunc/4d_chess) extending the upstream project with a Pyodide-driven spectral move visualizer (powered by [`chess-spectral`](https://pypi.org/project/chess-spectral/) and [`python-chess4d-oana-chiru`](https://pypi.org/project/python-chess4d-oana-chiru/), loaded at runtime from PyPI in the user's browser). See [LICENSE](LICENSE), [NOTICE](NOTICE), and [CLAUDE.md](CLAUDE.md) for licensing posture and contributor orientation.
+
 ## 📖 Overview
 
 This project implements a complete framework for four-dimensional chess, extending classical chess mechanics into a 4D space. The system includes:
