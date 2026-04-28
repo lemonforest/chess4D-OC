@@ -56,6 +56,7 @@ export default [
         // Marked 'writable' so no-redeclare doesn't fire on the declaring file.
         GameBoard: 'writable',
         BoardGraphics: 'writable',
+        gameBoard: 'writable',
         Models: 'writable',
         MoveManager: 'writable',
         Piece: 'writable',
