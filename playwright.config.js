@@ -5,7 +5,10 @@
 
 export default {
   testDir: './tests',
-  timeout: 60_000,
+  // Pyodide cold-boot (3-8s) + micropip install (5-30s) + page settle.
+  // The smoke spec's per-action timeout is 90s for SMOKE_READY; the test-
+  // wide timeout has to be larger or the test cuts off mid-init.
+  timeout: 180_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
