@@ -34,9 +34,9 @@ repository. The end user's browser fetches them directly from PyPI.
      License: MPL-2.0
      CDN:     https://cdn.jsdelivr.net/pyodide/
 
-  4. three.js (r128)
+  4. three.js (r184)
      License: MIT
-     CDN:     https://cdn.jsdelivr.net/npm/three@0.128.0/
+     CDN:     https://cdn.jsdelivr.net/npm/three@0.184.0/
 
 
 Licensing posture: aggregation, not derivative

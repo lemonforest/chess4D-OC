@@ -206,9 +206,10 @@ function initTutorial() {
     tutorialState.renderer.setSize(280, 200);
     console.log('✅ Tutorial renderer created');
     
-    // Simple orbit controls for rotation
-    if (typeof THREE.OrbitControls !== 'undefined') {
-        tutorialState.controls = new THREE.OrbitControls(tutorialState.camera, canvas);
+    // Simple orbit controls for rotation. r184: addons aren't on THREE
+    // namespace; OrbitControls is a global from the index.html module loader.
+    if (typeof OrbitControls !== 'undefined') {
+        tutorialState.controls = new OrbitControls(tutorialState.camera, canvas);
         tutorialState.controls.enableZoom = false;
         tutorialState.controls.enablePan = false;
         tutorialState.controls.minDistance = 10;

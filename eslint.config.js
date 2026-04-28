@@ -45,9 +45,10 @@ export default [
         FileReader: 'readonly',
         // CommonJS UMD guard (used by piece files for optional Node-side import)
         module: 'readonly',
-        // CDN-loaded
+        // CDN-loaded (Three.js + addons exposed as globals by the module loader in index.html)
         THREE: 'readonly',
         OBJLoader: 'readonly',
+        OrbitControls: 'readonly',
         // Worker globals (used by js/spectral_worker.js)
         self: 'readonly',
         importScripts: 'readonly',
