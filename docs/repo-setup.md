@@ -24,7 +24,9 @@ After connecting, every push to `main` deploys to the production URL; every push
 
 ## 2. Create the milestone labels
 
-Run this once. The `next-milestone.yml` workflow uses these to detect which PR maps to which milestone.
+Done in M1. The labels are purely organizational now — they tag PRs/issues by milestone for human navigation, but no workflow reads them. (M1 originally shipped a `next-milestone.yml` that opened tracking issues on merge, but the repo has Issues disabled and we discovered the in-session loop pattern is simpler anyway. M2 deletes the workflow.)
+
+Recreate the labels if needed:
 
 ```bash
 gh label create "milestone:M1"   --color "1f6feb" --description "M1 — repo hygiene + CI bootstrap"
@@ -76,10 +78,10 @@ gh api -X PATCH "repos/<owner>/<repo>" -F allow_auto_merge=true -F allow_squash_
 
 **As later milestones add CI workflows, append their check names to the `checks` array:**
 
-| Milestone PR adds workflow | Check name to add |
+| Milestone PR adds workflow | Check name to add (`context` in the API) |
 |---|---|
-| M2 | `lint`, `smoke`, plus `Cloudflare Pages` (the CF GitHub app's check) |
-| M3.5 | `parity` |
+| M2 | `ESLint and html-validate`, `Headless smoke test`, plus the Cloudflare Pages check (varies by CF project name) |
+| M3.5 | `Parity diff (JS vs Python)` (TBD — confirm the workflow's job `name:` field once it lands) |
 
 The check name is the `name:` field at the top of the workflow file (or the `name:` of the job if the workflow has multiple jobs). For Cloudflare's check, copy the exact context string from a successful PR's "Checks" tab. Easiest verification: after the workflow runs once on a PR, open the PR's "Checks" tab in the GitHub UI and copy the check name verbatim into the `checks` array.
 

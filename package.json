@@ -1,0 +1,20 @@
+{
+  "name": "chess4d-oc",
+  "private": true,
+  "version": "0.0.0",
+  "description": "4D chess UI with Pyodide-driven spectral move visualizer (fork of oanaunc/4d_chess)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "lint": "npm run lint:html && npm run lint:js",
+    "lint:html": "html-validate index.html",
+    "lint:js": "eslint .",
+    "test:smoke": "playwright test",
+    "serve": "python -m http.server 8000"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "eslint": "^9.18.0",
+    "html-validate": "^9.0.0"
+  }
+}
