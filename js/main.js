@@ -171,13 +171,22 @@ const selectionSystem = {
     HOVER_COLOR: 0x00B9FF,  // Blue for hover
     SELECT_COLOR: 0x00B9FF,  // Blue for selection
     
-    // Highlight a piece. M7c: pieces use shared materials, so we clone the
-    // material before mutating color (otherwise the highlight would bleed
-    // across all pieces of the same color). The original (possibly shared)
-    // material is parked in mesh.userData.__originalMaterial for restore.
+    // Highlight a piece. Two implementations:
+    //   instanced  — set per-instance RGB color attribute (M7d).
+    //   legacy     — clone the (shared) material and swap; restore on unhighlight.
     highlight: function(mesh, color) {
-        if (!mesh || !mesh.material) return;
-
+        if (!mesh) return;
+        const piece = mesh.userData && mesh.userData.piece;
+        if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced'
+            && piece && piece.instanceSlot && typeof Models !== 'undefined' && Models.setInstanceColor) {
+            const r = ((color >> 16) & 0xFF) / 255;
+            const g = ((color >>  8) & 0xFF) / 255;
+            const b = ( color        & 0xFF) / 255;
+            Models.setInstanceColor(piece, r, g, b);
+            window.__GAME_DIRTY__ = true;
+            return;
+        }
+        if (!mesh.material) return;
         if (!mesh.userData.__highlightMaterial) {
             const original = mesh.material;
             const highlight = original.clone();
@@ -191,12 +200,20 @@ const selectionSystem = {
         if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     },
 
-    // Unhighlight a piece. Restores the (likely shared) original material
-    // and disposes the temporary clone.
+    // Unhighlight a piece. Restores instance color to identity (1,1,1) in
+    // instanced mode; in legacy mode restores the original material + disposes
+    // the highlight clone.
     unhighlight: function(mesh) {
-        if (!mesh || !mesh.userData) return;
+        if (!mesh) return;
+        const piece = mesh.userData && mesh.userData.piece;
+        if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced'
+            && piece && piece.instanceSlot && typeof Models !== 'undefined' && Models.setInstanceColor) {
+            Models.setInstanceColor(piece, 1, 1, 1);
+            window.__GAME_DIRTY__ = true;
+            return;
+        }
+        if (!mesh.userData) return;
         if (!mesh.userData.__originalMaterial) return;
-
         const cloned = mesh.userData.__highlightMaterial;
         mesh.material = mesh.userData.__originalMaterial;
         delete mesh.userData.__originalMaterial;
@@ -1751,6 +1768,29 @@ function animate() {
 
     // M7c render-on-demand: skip the GPU pipeline when nothing has changed.
     if (!window.__GAME_DIRTY__) return;
+
+    // M7d: sync per-piece transforms into the InstancedMesh slots so the
+    // GPU sees the latest positions. Only runs when ?renderer=instanced
+    // is active and only on dirty frames (so this is bounded by the
+    // already-throttled render budget).
+    if (window.__RENDERER__ === 'instanced' && typeof Models !== 'undefined' && Models._instancedMeshes) {
+        if (typeof gameBoard !== 'undefined' && gameBoard.pieces) {
+            const board = gameBoard.pieces;
+            for (let x = 0; x < 8; x++) {
+                for (let y = 0; y < 8; y++) {
+                    for (let z = 0; z < 8; z++) {
+                        for (let w = 0; w < 8; w++) {
+                            const p = board[x][y][z][w];
+                            if (p && p.type && p.mesh && p.instanceSlot) {
+                                Models.syncInstanceMatrix(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     renderer.render(scene, camera);
     window.__GAME_DIRTY__ = false;
 }
@@ -1761,54 +1801,60 @@ function animate() {
 
 function updatePieceHover() {
     if (!gameBoard || !gameBoard.graphics) return;
-    
-    // Only update hover if no piece is selected
     if (selectionSystem.selectedPiece) return;
-    
-    // Get current team (only hover pieces from current player)
+
     let currentTeam = null;
     if (moveManager && typeof moveManager.whoseTurn === 'function') {
         currentTeam = moveManager.whoseTurn();
     }
-    
-    // PERFORMANCE: Get all selectable pieces (only from current team)
-    // Skip expensive frustum culling - Three.js handles this automatically during rendering
-    const pieces = gameBoard.graphics.piecesContainer.children.filter(p => {
-        if (!p.canRayCast) return false;
-        if (p.selectable === false) return false;
-        
-        // Only hover pieces from current player's team
-        if (currentTeam !== null) {
-            const worldPos = p.position;
-            const boardCoords = gameBoard.graphics.worldCoordinates(worldPos);
-            const piece = gameBoard.pieces[boardCoords.x][boardCoords.y][boardCoords.z][boardCoords.w];
-            if (piece && piece.team !== currentTeam) {
-                return false; // Not current player's piece
+
+    let closest = null;
+
+    if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced'
+        && typeof Models !== 'undefined' && Models._instancedMeshes && Models._instanceLookup) {
+        // M7d instanced raycast: hit-test the InstancedMesh objects directly,
+        // map intersection.instanceId -> Piece via the reverse-lookup table,
+        // then return the (hidden) per-piece mesh as the "hovered" handle so
+        // downstream highlight code stays compatible.
+        selectionSystem.raycaster.setFromCamera(selectionSystem.mouse, camera);
+        const ims = Object.values(Models._instancedMeshes).filter((im) => im.count > 0);
+        const intersects = selectionSystem.raycaster.intersectObjects(ims, false);
+        for (const hit of intersects) {
+            const typeKey = hit.object.userData.typeKey;
+            const piece = Models._instanceLookup.get(`${typeKey}-${hit.instanceId}`);
+            if (!piece || !piece.mesh) continue;
+            if (currentTeam !== null && piece.team !== currentTeam) continue;
+            closest = piece.mesh;
+            break;
+        }
+    } else {
+        // Legacy: filter piecesContainer children by selectability + team,
+        // then raycast against that subset (capped at 100 for cost).
+        const pieces = gameBoard.graphics.piecesContainer.children.filter((p) => {
+            if (!p.canRayCast) return false;
+            if (p.selectable === false) return false;
+            if (currentTeam !== null) {
+                const worldPos = p.position;
+                const boardCoords = gameBoard.graphics.worldCoordinates(worldPos);
+                const piece = gameBoard.pieces[boardCoords.x][boardCoords.y][boardCoords.z][boardCoords.w];
+                if (piece && piece.team !== currentTeam) return false;
             }
+            return true;
+        });
+
+        if (pieces.length === 0) {
+            if (selectionSystem.hoveredPiece) {
+                selectionSystem.unhighlight(selectionSystem.hoveredPiece);
+                selectionSystem.hoveredPiece = null;
+            }
+            return;
         }
-        
-        return true;
-    });
-    
-    if (pieces.length === 0) {
-        // Unhighlight if no pieces are available
-        if (selectionSystem.hoveredPiece) {
-            selectionSystem.unhighlight(selectionSystem.hoveredPiece);
-            selectionSystem.hoveredPiece = null;
-        }
-        return;
+
+        const piecesToRaycast = pieces.length > 100 ? pieces.slice(0, 100) : pieces;
+        selectionSystem.raycaster.setFromCamera(selectionSystem.mouse, camera);
+        const intersects = selectionSystem.raycaster.intersectObjects(piecesToRaycast);
+        closest = intersects.length > 0 ? intersects[0].object : null;
     }
-    
-    // PERFORMANCE: Limit number of pieces to raycast (max 100 pieces for hover)
-    // This prevents expensive raycasting when there are many pieces on screen
-    const piecesToRaycast = pieces.length > 100 ? pieces.slice(0, 100) : pieces;
-    
-    // Update raycasting
-    selectionSystem.raycaster.setFromCamera(selectionSystem.mouse, camera);
-    const intersects = selectionSystem.raycaster.intersectObjects(piecesToRaycast);
-    
-    // Get closest intersection
-    const closest = intersects.length > 0 ? intersects[0].object : null;
     
     // Update hover highlight
     if (closest !== selectionSystem.hoveredPiece) {

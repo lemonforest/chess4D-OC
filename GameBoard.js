@@ -975,21 +975,49 @@ BoardGraphics.prototype = {
         if (mesh) {
             // Make piece selectable by default
             mesh.selectable = true;
+            // Stamp a back-reference so raycaster hits and highlights can
+            // resolve mesh->piece without a separate lookup table.
+            mesh.userData.piece = piece;
             piece.setMesh(mesh);
+            // M7d: when ?renderer=instanced, allocate a slot in the matching
+            // InstancedMesh, hide the regular mesh (still used for transform
+            // bookkeeping), and add the InstancedMesh objects to the
+            // piecesContainer on first allocation.
+            if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced') {
+                Models.ensureInstancedMeshes(this.piecesContainer);
+                const rotateY = (piece.team === 0) ? Math.PI : 0;
+                const slot = Models.allocInstanceSlot(piece, mesh.position.x, mesh.position.y, mesh.position.z, rotateY);
+                if (slot) {
+                    piece.instanceSlot = slot;
+                    mesh.visible = false;
+                }
+            }
         } else {
             console.error(`❌ Failed to create mesh for ${piece.type} at (${x},${y},${z},${w})`);
         }
 	},
-	
+
 	removeMesh: function(piece){
 		this.piecesContainer.remove(piece.mesh);
+		// M7d: zero the instance matrix so the InstancedMesh draws nothing
+		// at this slot. We deliberately leak the slot (don't reclaim) since
+		// 1000-cap >> 896 pieces leaves plenty of headroom for promotions.
+		if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced' && piece.instanceSlot) {
+			const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+			piece.instanceSlot.im.setMatrixAt(piece.instanceSlot.id, zero);
+			piece.instanceSlot.im.instanceMatrix.needsUpdate = true;
+		}
 	},
-	
+
 	respawnMesh: function(piece, x, y, z, w){
 		if (piece.mesh) {
 			this.piecesContainer.add(piece.mesh);
 		} else {
 			piece.mesh = this.createMesh(piece.type, piece.team, x, y, z, w, true);
+		}
+		// M7d: restore the instance matrix from the regular mesh's transform.
+		if (typeof window !== 'undefined' && window.__RENDERER__ === 'instanced' && piece.instanceSlot) {
+			Models.syncInstanceMatrix(piece);
 		}
 		
 	},

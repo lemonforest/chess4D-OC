@@ -36,6 +36,7 @@ export default [
         cancelAnimationFrame: 'readonly',
         Worker: 'readonly',
         URL: 'readonly',
+        URLSearchParams: 'readonly',
         Blob: 'readonly',
         fetch: 'readonly',
         alert: 'readonly',
