@@ -171,24 +171,38 @@ const selectionSystem = {
     HOVER_COLOR: 0x00B9FF,  // Blue for hover
     SELECT_COLOR: 0x00B9FF,  // Blue for selection
     
-    // Highlight a piece
+    // Highlight a piece. M7c: pieces use shared materials, so we clone the
+    // material before mutating color (otherwise the highlight would bleed
+    // across all pieces of the same color). The original (possibly shared)
+    // material is parked in mesh.userData.__originalMaterial for restore.
     highlight: function(mesh, color) {
         if (!mesh || !mesh.material) return;
-        
-        // Store original color if not already stored
-        if (!mesh.material.originalColor) {
-            mesh.material.originalColor = mesh.material.color.getHex();
+
+        if (!mesh.userData.__highlightMaterial) {
+            const original = mesh.material;
+            const highlight = original.clone();
+            highlight.color.setHex(color);
+            mesh.userData.__originalMaterial = original;
+            mesh.userData.__highlightMaterial = highlight;
+            mesh.material = highlight;
+        } else {
+            mesh.userData.__highlightMaterial.color.setHex(color);
         }
-        
-        // Set new color
-        mesh.material.color.setHex(color);
+        if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     },
-    
-    // Unhighlight a piece
+
+    // Unhighlight a piece. Restores the (likely shared) original material
+    // and disposes the temporary clone.
     unhighlight: function(mesh) {
-        if (!mesh || !mesh.material || !mesh.material.originalColor) return;
-        
-        mesh.material.color.setHex(mesh.material.originalColor);
+        if (!mesh || !mesh.userData) return;
+        if (!mesh.userData.__originalMaterial) return;
+
+        const cloned = mesh.userData.__highlightMaterial;
+        mesh.material = mesh.userData.__originalMaterial;
+        delete mesh.userData.__originalMaterial;
+        delete mesh.userData.__highlightMaterial;
+        if (cloned && typeof cloned.dispose === 'function') cloned.dispose();
+        if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     }
 };
 
@@ -593,6 +607,12 @@ function setupThreeJS() {
     controls.target.set(0, 0, 0);  // Will be updated after board is created
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    // M7c: mark scene dirty whenever the camera moves so render-on-demand
+    // picks up orbit/pan/zoom. Damping means 'change' fires for ~200ms after
+    // input stops — that's intended; the loop will idle once damping settles.
+    controls.addEventListener('change', () => {
+        if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+    });
     controls.screenSpacePanning = true;  // Enable vertical panning (like CAD)
     controls.minDistance = 200;
     controls.maxDistance = 5000;
@@ -634,27 +654,20 @@ function setupThreeJS() {
 }
 
 function setupLights() {
-    // VISUAL: Optimized lighting for better piece appearance
-    // Stronger ambient light for even illumination (no shadows needed)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    // M7c: trimmed from 3 directional + 1 ambient down to 1 directional +
+    // 1 ambient. The render-perf audit estimated +5-10% FPS for this on
+    // older laptops since per-frame light×mesh shading scales linearly.
+    // The ambient intensity is bumped slightly to compensate for the lost
+    // fill+rim lights; visual difference is minor at the camera distance
+    // we use, and the M7d InstancedMesh pass will further amortize the
+    // remaining shading cost.
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
     scene.add(ambientLight);
-    
-    // Main directional light - primary light source
+
     const mainLight = new THREE.DirectionalLight(0xffffff, 0.7);
     mainLight.position.set(500, 1000, 500);
-    mainLight.castShadow = false; // Shadows disabled for performance
+    mainLight.castShadow = false;
     scene.add(mainLight);
-    
-    // VISUAL: Add subtle fill light from opposite side for depth (low intensity)
-    // This adds minimal performance cost but significantly improves piece appearance
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.2);
-    fillLight.position.set(-400, 300, -400);
-    scene.add(fillLight);
-    
-    // VISUAL: Add subtle rim light for edge definition
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.15);
-    rimLight.position.set(0, -500, 0);
-    scene.add(rimLight);
 }
 
 /* ============================================
@@ -1676,42 +1689,70 @@ const GIZMO_UPDATE_INTERVAL = 50; // Update gizmo every 50ms (20 FPS)
 const MAX_FPS = 60; // Cap frame rate to 60 FPS
 const TARGET_FRAME_TIME = 1000 / MAX_FPS; // ~16.67ms per frame
 
+// M7c: render-on-demand. Default true on first frame so the initial board
+// renders even if no input has arrived; otherwise the loop skips
+// renderer.render() when nothing has changed. Anything that mutates the
+// scene (input, animation queue, controls, hover/click, spectral overlay)
+// flips the flag back to true; the animate loop clears it after a render.
+if (typeof window !== 'undefined') {
+    window.__GAME_DIRTY__ = true;
+    // Coarse "things changed" listeners. The browser fires these regardless
+    // of whether the user actually mutated the scene; that's fine — being
+    // over-eager here is cheaper than missing a real change.
+    const markDirty = () => { window.__GAME_DIRTY__ = true; };
+    window.addEventListener('pointermove', markDirty, { passive: true });
+    window.addEventListener('pointerdown', markDirty, { passive: true });
+    window.addEventListener('pointerup',   markDirty, { passive: true });
+    window.addEventListener('wheel',       markDirty, { passive: true });
+    window.addEventListener('keydown',     markDirty);
+    window.addEventListener('keyup',       markDirty);
+    window.addEventListener('resize',      markDirty);
+    // OrbitControls dispatches 'change' on its DOM element; we wire it once
+    // we have a controls instance (in setupThreeJs, where controls is created).
+}
+
 function animate() {
     requestAnimationFrame(animate);
-    
+
     const now = performance.now();
     const deltaTime = now - lastRenderTime;
-    
-    // PERFORMANCE: Skip rendering if too soon (cap at 60 FPS)
+
+    // PERFORMANCE: Cap frame rate at 60 FPS regardless of dirty state.
     if (deltaTime < TARGET_FRAME_TIME) {
         frameSkipCount++;
-        return; // Skip this frame
+        return;
     }
-    
     lastRenderTime = now;
-    
-    // Update controls
+
     controls.update();
-    
-    // Throttle raycasting for piece selection (hover) - only update every 100ms
+
+    // Throttled scene-bookkeeping. These can mark the scene dirty themselves
+    // when something actually changes (e.g. hover state flip).
     if (now - lastHoverUpdate >= HOVER_UPDATE_INTERVAL) {
         updatePieceHover();
         lastHoverUpdate = now;
     }
-    
-    // Throttle 2D gizmo visualization - only update every 50ms
     if (now - lastGizmoUpdate >= GIZMO_UPDATE_INTERVAL) {
         update2DGizmo();
         lastGizmoUpdate = now;
     }
-    
-    // Process animation queue (piece movements)
+
+    // Animation queue processing — if pieces are mid-move, mark dirty so
+    // the render below actually fires. Animation.processQueue is expected
+    // to return truthy when it advanced state; if it doesn't return that
+    // signal, we fall back to a heuristic: if there's anything to process,
+    // assume dirty.
     if (typeof Animation !== 'undefined' && Animation.processQueue) {
-        Animation.processQueue();
+        const advanced = Animation.processQueue();
+        if (advanced || (Animation.queue && Animation.queue.length > 0)) {
+            window.__GAME_DIRTY__ = true;
+        }
     }
-    
-    // Render scene
+
+    // M7c render-on-demand: skip the GPU pipeline when nothing has changed.
+    if (!window.__GAME_DIRTY__) return;
     renderer.render(scene, camera);
+    window.__GAME_DIRTY__ = false;
 }
 
 /* ============================================

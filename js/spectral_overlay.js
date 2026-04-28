@@ -87,6 +87,8 @@
         if (mat.needsUpdate !== undefined) mat.needsUpdate = true;
       }
     }
+    // M7c: render-on-demand needs to know we mutated material state.
+    if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
   }
 
   // Fire previewEncoding for the given origin and apply intensities for the

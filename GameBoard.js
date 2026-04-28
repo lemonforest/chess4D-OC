@@ -826,14 +826,20 @@ BoardGraphics.prototype = {
 					return; // Skip if no piece to capture
 				}
 				
-				// Highlight the actual piece that will be captured in red
+				// Highlight the actual piece that will be captured in red.
+				// M7c: pieces now use shared materials, so we must NOT mutate
+				// material.color in place (it would bleed across all pieces of
+				// the same color). Instead clone the material, mutate the
+				// clone, swap it in, and restore on hidePossibleMoves.
 				if (attackedPiece.mesh && attackedPiece.mesh.material) {
-					// Store original color if not already stored
-					if (!attackedPiece.mesh.material.originalColor) {
-						attackedPiece.mesh.material.originalColor = attackedPiece.mesh.material.color.getHex();
+					if (!attackedPiece.mesh.userData.__capturedHighlight) {
+						const original = attackedPiece.mesh.material;
+						const highlight = original.clone();
+						highlight.color.setHex(0xff0000);
+						attackedPiece.mesh.userData.__originalMaterial = original;
+						attackedPiece.mesh.userData.__capturedHighlight = highlight;
+						attackedPiece.mesh.material = highlight;
 					}
-					// Highlight in red
-					attackedPiece.mesh.material.color.setHex(0xff0000); // Red
 					capturedPieces.push(attackedPiece.mesh);
 				}
 				
@@ -877,11 +883,17 @@ BoardGraphics.prototype = {
     },
     
     hidePossibleMoves: function(){
-        // Restore original colors of captured pieces (remove red highlight)
+        // Restore original (shared) materials on captured pieces. M7c uses
+        // a per-mesh clone for the red highlight; swap it back and dispose.
         if (this.capturedPiecesHighlighted) {
             this.capturedPiecesHighlighted.forEach(mesh => {
-                if (mesh && mesh.material && mesh.material.originalColor !== undefined) {
-                    mesh.material.color.setHex(mesh.material.originalColor);
+                if (!mesh || !mesh.userData) return;
+                if (mesh.userData.__originalMaterial) {
+                    const cloned = mesh.userData.__capturedHighlight;
+                    mesh.material = mesh.userData.__originalMaterial;
+                    delete mesh.userData.__originalMaterial;
+                    delete mesh.userData.__capturedHighlight;
+                    if (cloned && typeof cloned.dispose === 'function') cloned.dispose();
                 }
             });
             this.capturedPiecesHighlighted = [];
