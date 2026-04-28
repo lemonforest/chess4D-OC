@@ -1,0 +1,32 @@
+name: chess4D-OC CodeQL config
+
+# Languages to analyze. We only ship JavaScript at runtime; the Python
+# packages (chess-spectral, python-chess4d-oana-chiru) are loaded into
+# Pyodide from PyPI in the user's browser at runtime. CodeQL cannot
+# analyze code it does not ingest, so Python is intentionally excluded.
+# See NOTICE for the runtime-aggregation licensing posture.
+
+queries:
+  - uses: security-and-quality
+
+paths:
+  - "*.js"
+  - "js/"
+
+paths-ignore:
+  # Upstream reference implementations checked in for comparison; not
+  # part of the shipped site. Vendor-style code.
+  - "example/"
+  # OBJ piece models — not source code.
+  - "models/"
+  # Dev dependencies installed for tests/lint after M2.
+  - "node_modules/"
+  - "tests/"
+  # Three.js and Pyodide are loaded from CDN, never vendored. If a future
+  # PR ever vendors a third-party JS library, add the path here.
+
+# CodeQL fails the workflow on any newly-introduced finding of the
+# given severity in changed code. The "security-and-quality" suite is
+# broader than "security-extended" and catches code-quality issues
+# (dead code, unreachable branches, etc.) which is appropriate for a
+# small frontend integration project.

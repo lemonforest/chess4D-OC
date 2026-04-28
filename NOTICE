@@ -1,0 +1,80 @@
+chess4D-OC — 4D Chess Spectral Visualizer
+==========================================
+
+This work is licensed under the MIT License — see LICENSE.
+
+Lineage
+-------
+This repository is a fork of oanaunc/4d_chess
+  https://github.com/oanaunc/4d_chess
+The original implementation accompanies the research paper:
+  "A Mathematical Framework for Four-Dimensional Chess"
+  by Rinaldi (Unciuleanu) Oana and Costin-Gabriel Chiru.
+Live demo of the upstream: https://oanarinaldi.com/4d_chess/
+
+
+Runtime dependencies (loaded by the user's browser at runtime, not bundled)
+---------------------------------------------------------------------------
+
+The chess4D-OC application loads the following Python packages from PyPI
+into a Pyodide WebAssembly runtime in the user's browser at page load.
+The packages are NOT vendored, mirrored, or redistributed by this
+repository. The end user's browser fetches them directly from PyPI.
+
+  1. chess-spectral (>= 1.3.0)
+     License: GPL-3.0-or-later
+     PyPI:    https://pypi.org/project/chess-spectral/
+     Source:  https://github.com/lemonforest/chess-spectral
+
+  2. python-chess4d-oana-chiru (>= 0.3.3)
+     License: Unlicense (public domain)
+     PyPI:    https://pypi.org/project/python-chess4d-oana-chiru/
+
+  3. pyodide
+     License: MPL-2.0
+     CDN:     https://cdn.jsdelivr.net/pyodide/
+
+  4. three.js (r128)
+     License: MIT
+     CDN:     https://cdn.jsdelivr.net/npm/three@0.128.0/
+
+
+Licensing posture: aggregation, not derivative
+----------------------------------------------
+
+chess-spectral is GPL-3.0-or-later. This repository's source code does not
+incorporate, link against, or redistribute chess-spectral. The combination
+of chess-spectral with this MIT-licensed frontend occurs in the end user's
+browser at runtime, when the user (or, equivalently, their browser acting
+on their behalf) fetches chess-spectral from PyPI via Pyodide's micropip
+loader.
+
+This is the same legal posture as an MIT-licensed application that calls
+into a GPL system library installed by the user — the works are aggregated
+at runtime by the user, not combined into a derivative work by the
+distributor of this repository. See:
+  - GPL FAQ "What is the difference between an 'aggregate' and other kinds
+    of 'modified versions'?"
+    https://www.gnu.org/licenses/gpl-faq.html#MereAggregation
+  - "Mere aggregation" clause in GPL-3.0 §5
+
+To preserve this posture, contributors to this repository MUST NOT:
+  - Vendor, copy, or mirror chess-spectral source or wheels into this repo
+  - Bundle chess-spectral into a build artifact distributed from this repo
+  - Pre-cache chess-spectral on a CDN controlled by this project's
+    maintainers (CDN re-distribution may itself trigger GPL obligations)
+
+The micropip install MUST hit the user's PyPI mirror (typically
+pypi.org) at runtime in the user's browser. Loading chess-spectral
+from anywhere else converts the runtime aggregation into bundled
+distribution and triggers GPL-3.0-or-later for the entire combined work.
+
+
+Smoke / parity test corpus and research references
+--------------------------------------------------
+
+The 4D_CHESS_RESEARCH_PAPER.md in this repository documents the
+mathematical framework of the upstream 4d_chess project. The
+chess-spectral Phase Operator Supplement (referenced from PR #67 of the
+upstream chess-spectral project) underpins the spectral visualization
+layer added in M5–M6.

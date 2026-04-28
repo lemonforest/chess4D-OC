@@ -1,0 +1,55 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # NOT pull_request_target — fork PRs must run with the restricted
+    # token context, never with write permissions on the base repo.
+    branches: [main]
+  schedule:
+    # Weekly drift run: catches new advisories that affect existing code
+    # without requiring a PR. Monday 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+# Cancel an in-flight CodeQL run when a new commit is pushed to the
+# same PR — saves Actions minutes on fast-iterating branches.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write  # required to upload SARIF results
+
+jobs:
+  analyze:
+    name: Analyze JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Autobuild
+        # JS doesn't need a build step; Autobuild is a no-op for us but
+        # keeps the workflow shape uniform with multi-language repos.
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
