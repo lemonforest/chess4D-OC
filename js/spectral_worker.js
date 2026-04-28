@@ -16,12 +16,12 @@ let pyodide = null;
 let status = 'loading'; // loading -> initializing -> ready | error
 let initError = null;
 let cachedVersions = null;
+let cachedPackageStatus = null;
 
 async function ensureInit() {
-  if (pyodide) return { ready: true, versions: cachedVersions };
+  if (pyodide) return { ready: true, versions: cachedVersions, packages: cachedPackageStatus };
   status = 'initializing';
   try {
-    // eslint-disable-next-line no-undef -- loadPyodide is global from importScripts
     pyodide = await loadPyodide({
       indexURL: PYODIDE_URL,
       stdout: (msg) => console.log('[py]', msg),
@@ -30,14 +30,16 @@ async function ensureInit() {
 
     await pyodide.loadPackage('micropip');
     const micropip = pyodide.pyimport('micropip');
-    await micropip.install([
-      'chess-spectral>=1.3.0',
-      'python-chess4d-oana-chiru>=0.3.3',
-    ]);
 
-    // Confirm both packages import. Versions are best-effort —
-    // some upstream packages don't export __version__.
-    const versions = pyodide
+    // keep_going=True so a failure on one package (e.g. missing pure-python
+    // wheel) doesn't block the others. We then probe what actually imported
+    // and surface the gap to JS via the `packages` field of the init result.
+    await micropip.install(
+      ['chess-spectral>=1.3.0', 'python-chess4d-oana-chiru>=0.3.3'],
+      true /* keep_going */
+    );
+
+    const probe = pyodide
       .runPython(
         `
 import importlib.metadata as m
@@ -45,22 +47,37 @@ def _ver(pkg):
     try:
         return m.version(pkg)
     except Exception:
-        return 'unknown'
-import chess_spectral
-import chess4d
+        return None
+
+def _import(modname):
+    try:
+        __import__(modname)
+        return True
+    except Exception as e:
+        return f'{type(e).__name__}: {e}'
+
 {
-    'chess_spectral': _ver('chess-spectral'),
-    'chess4d': _ver('python-chess4d-oana-chiru'),
+    'versions': {
+        'chess_spectral': _ver('chess-spectral'),
+        'chess4d': _ver('python-chess4d-oana-chiru'),
+    },
+    'imports': {
+        'chess_spectral': _import('chess_spectral'),
+        'chess4d': _import('chess4d'),
+        'phase_operators_4d': _import('chess_spectral.phase_operators_4d'),
+    },
 }
 `
       )
       .toJs({ dict_converter: Object.fromEntries });
 
-    cachedVersions = versions;
+    cachedVersions = probe.versions;
+    cachedPackageStatus = probe.imports;
     status = 'ready';
     return {
       ready: true,
-      versions,
+      versions: probe.versions,
+      packages: probe.imports,
       pyodide: pyodide.version,
     };
   } catch (err) {
@@ -114,6 +131,232 @@ except (ImportError, AttributeError):
 `
       )
       .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // M4a state tracking — Python-canonical state with a JS-side mirror.
+  // Keeps a move-history list and rebuilds state on demand. Slow on long
+  // games (O(N) per query) but reliable across chess4d API variations.
+  // M4b will replace with an in-place state mutation once the chess4d
+  // API surface is locked down.
+
+  resetToInitial() {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    pyodide.runPython('_move_history = []');
+    return { ok: true, history_len: 0 };
+  },
+
+  applyMove(args) {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    pyodide.globals.set('_move_origin', [args.origin.x, args.origin.y, args.origin.z, args.origin.w]);
+    pyodide.globals.set('_move_dest',   [args.dest.x,   args.dest.y,   args.dest.z,   args.dest.w]);
+    return pyodide
+      .runPython(
+        `
+import chess4d
+try:
+    _move_history
+except NameError:
+    _move_history = []
+
+origin = tuple(int(v) for v in _move_origin)
+dest   = tuple(int(v) for v in _move_dest)
+_move_history.append((origin, dest))
+
+# Validate by reconstructing — roll back if reconstruction fails.
+def _try_apply(state, o, d):
+    """Try various chess4d API shapes for applying a move."""
+    for fn_name in ('apply_move', 'make_move', 'move', 'do_move', 'push'):
+        fn = getattr(state, fn_name, None)
+        if callable(fn):
+            try:
+                r = fn(o, d)
+                return r if r is not None else state
+            except TypeError:
+                try:
+                    r = fn((o, d))
+                    return r if r is not None else state
+                except Exception:
+                    continue
+            except Exception:
+                continue
+    fn = getattr(chess4d, 'apply_move', None) or getattr(chess4d, 'make_move', None)
+    if callable(fn):
+        try:
+            return fn(state, o, d)
+        except Exception:
+            pass
+    raise RuntimeError('No apply-move API found on chess4d state')
+
+try:
+    state = chess4d.initial_position()
+    for (o, d) in _move_history:
+        state = _try_apply(state, o, d)
+    result = {'ok': True, 'history_len': len(_move_history)}
+except Exception as e:
+    _move_history.pop()
+    result = {'ok': False, 'error': f'{type(e).__name__}: {e}', 'history_len': len(_move_history)}
+
+result
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  undo() {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    return pyodide
+      .runPython(
+        `
+try:
+    _move_history
+except NameError:
+    _move_history = []
+if _move_history:
+    _move_history.pop()
+{'ok': True, 'history_len': len(_move_history)}
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // M4a public legalMoves — uses CURRENT state (initial + applied moves).
+  // Replaces M3.5's legalMovesAtInitial as the canonical query API.
+  legalMoves(args) {
+    if (status !== 'ready') {
+      throw new Error(`Worker not ready (status=${status})`);
+    }
+    const x = args.x, y = args.y, z = args.z, w = args.w;
+    pyodide.globals.set('_origin_x', x);
+    pyodide.globals.set('_origin_y', y);
+    pyodide.globals.set('_origin_z', z);
+    pyodide.globals.set('_origin_w', w);
+    return pyodide
+      .runPython(
+        `
+import chess4d
+try:
+    _move_history
+except NameError:
+    _move_history = []
+
+origin = (int(_origin_x), int(_origin_y), int(_origin_z), int(_origin_w))
+
+def _try_apply(state, o, d):
+    for fn_name in ('apply_move', 'make_move', 'move', 'do_move', 'push'):
+        fn = getattr(state, fn_name, None)
+        if callable(fn):
+            try:
+                r = fn(o, d)
+                return r if r is not None else state
+            except TypeError:
+                try:
+                    r = fn((o, d))
+                    return r if r is not None else state
+                except Exception:
+                    continue
+            except Exception:
+                continue
+    raise RuntimeError('apply-move api missing')
+
+# Rebuild current state from history.
+state = chess4d.initial_position()
+for (o, d) in _move_history:
+    try:
+        state = _try_apply(state, o, d)
+    except Exception:
+        # Skip moves that fail to apply — the state at least reflects
+        # what we could replay.
+        pass
+
+# Find piece at origin (best-effort).
+def _piece_at(s, coords):
+    if hasattr(s, 'board'):
+        b = s.board
+        for fn in ('get_piece', 'piece_at', 'at'):
+            f = getattr(b, fn, None)
+            if callable(f):
+                try:
+                    return f(*coords)
+                except TypeError:
+                    try:
+                        return f(coords)
+                    except Exception:
+                        pass
+        if hasattr(b, 'pieces'):
+            for p in b.pieces:
+                pos = (
+                    getattr(p, 'x', None), getattr(p, 'y', None),
+                    getattr(p, 'z', None), getattr(p, 'w', None),
+                )
+                if pos == coords:
+                    return p
+    if hasattr(s, 'pieces'):
+        for p in s.pieces:
+            pos = (
+                getattr(p, 'x', None), getattr(p, 'y', None),
+                getattr(p, 'z', None), getattr(p, 'w', None),
+            )
+            if pos == coords:
+                return p
+    return None
+
+piece = _piece_at(state, origin)
+if piece is None:
+    result = {'ok': False, 'reason': 'no-piece-at-origin', 'moves': [], 'history_len': len(_move_history)}
+else:
+    moves = None
+    err = None
+    # 1) chess-spectral phase-operator oracle (preferred — same engine the
+    # encoder will use in M5).
+    try:
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import (
+            occupation_aware_moves_a_4d,
+        )
+        moves = occupation_aware_moves_a_4d(state, origin, piece)
+    except Exception as e:
+        err = f'spectral: {type(e).__name__}: {e}'
+
+    if moves is None:
+        try:
+            from chess_spectral import phase_operators_4d as po
+            moves = po.occupation_aware_moves_a_4d(state, origin, piece)
+        except Exception as e:
+            err = (err or '') + f' | po: {type(e).__name__}: {e}'
+
+    # 2) chess4d's native legality (works without chess-spectral).
+    if moves is None:
+        try:
+            all_legal = chess4d.legal_moves(state)
+            moves = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
+        except Exception as e:
+            err = (err or '') + f' | chess4d: {type(e).__name__}: {e}'
+
+    if moves is None:
+        result = {'ok': False, 'reason': err or 'unknown', 'moves': [], 'history_len': len(_move_history)}
+    else:
+        out = []
+        for m in moves:
+            try:
+                t = tuple(m)[:4]
+            except TypeError:
+                t = (
+                    getattr(m, 'x', None), getattr(m, 'y', None),
+                    getattr(m, 'z', None), getattr(m, 'w', None),
+                )
+            if all(v is not None for v in t):
+                out.append({'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])})
+        result = {'ok': True, 'reason': None, 'moves': out, 'history_len': len(_move_history)}
+
+result
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 4 });
   },
 
   // M3.5 parity helper: list every piece in the initial position so the

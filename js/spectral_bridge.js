@@ -11,6 +11,13 @@
 (function () {
   'use strict';
 
+  // M4a feature flag: ?legalityEngine= controls who drives move legality.
+  //   js     — JS engine is sole authority (default; current behavior)
+  //   shadow — JS drives; Python runs in parallel and logs diffs to console
+  //   py     — Python is sole authority (M4b — not yet wired)
+  const flagFromUrl = new URLSearchParams(location.search).get('legalityEngine') || 'js';
+  window.__LEGALITY_ENGINE__ = ['js', 'shadow', 'py'].includes(flagFromUrl) ? flagFromUrl : 'js';
+
   const worker = new Worker('js/spectral_worker.js');
   const pending = new Map();
   let nextId = 1;
@@ -51,14 +58,30 @@
     });
   }
 
+  // Apply-chain queue: serializes applyMove and undo so that the worker's
+  // move history advances atomically, and legalMoves observes the latest
+  // state. Other read-only methods don't need this — they're idempotent.
+  let applyChain = Promise.resolve();
+  function chained(method, ...args) {
+    const p = applyChain.then(() => call(method, ...args));
+    applyChain = p.catch(() => {}); // swallow rejections so the chain doesn't poison
+    return p;
+  }
+
   const bridge = {
     init: () => call('init'),
     getStatus: () => call('getStatus'),
     getConstants: () => call('getConstants'),
     getInitialPositionInfo: () => call('getInitialPositionInfo'),
-    // M3.5 parity helpers — not part of the long-term API. M4a will
-    // replace these with general legalMoves(state, origin) once
-    // Pyodide owns the canonical state.
+
+    // M4a stateful API — bridge enforces serial ordering of mutations.
+    applyMove: (origin, dest) => chained('applyMove', { origin, dest }),
+    undo: () => chained('undo'),
+    resetToInitial: () => chained('resetToInitial'),
+    legalMoves: (origin) => applyChain.then(() => call('legalMoves', origin)),
+
+    // M3.5 parity helpers — kept for the parity harness. listInitialPieces
+    // is still the cleanest way to enumerate the canonical starting position.
     listInitialPieces: () => call('listInitialPieces'),
     legalMovesAtInitial: (origin) => call('legalMovesAtInitial', origin),
   };
