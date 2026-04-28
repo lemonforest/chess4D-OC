@@ -18,6 +18,13 @@
   const flagFromUrl = new URLSearchParams(location.search).get('legalityEngine') || 'js';
   window.__LEGALITY_ENGINE__ = ['js', 'shadow', 'py'].includes(flagFromUrl) ? flagFromUrl : 'js';
 
+  // M7d feature flag: ?renderer= picks the rendering path.
+  //   legacy    — 896 individual Mesh children of piecesContainer (default)
+  //   instanced — 12 InstancedMesh objects (per-type per-team), per-instance
+  //               color for highlight, lower draw-call count
+  const renderFlag = new URLSearchParams(location.search).get('renderer');
+  window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
+
   const worker = new Worker('js/spectral_worker.js');
   const pending = new Map();
   let nextId = 1;

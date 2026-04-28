@@ -206,6 +206,94 @@ const Models = {
         return null; // signal: caller should allocate a per-instance material
     },
 
+    // M7d: per-(type, team) InstancedMesh. Lazy-built on first piece spawn;
+    // legacy renderer path leaves this untouched. With ?renderer=instanced
+    // the 896 long-lived pieces are drawn from these 12 InstancedMesh
+    // objects (instead of 896 individual Mesh children of piecesContainer),
+    // collapsing draw calls from ~896 to 12 per frame.
+    _instancedMeshes: null,
+    _instanceLookup: null, // Map<typeKey-id, Piece> — reverse map for raycast hits
+
+    ensureInstancedMeshes: function (parentObject3D) {
+        if (Models._instancedMeshes) return Models._instancedMeshes;
+        const out = {};
+        const lookup = new Map();
+        const MAX_INSTANCES = 1000; // 896 pieces + headroom for promotions
+        const isDoubleSide = (n) => n === 'pawn' || n === 'bishop' || n === 'queen';
+
+        for (const pdata of Models.pieceData) {
+            const geom = Models.geometries[pdata.name];
+            if (!geom) continue;
+            for (const team of [0, 1]) {
+                const teamCfg = team === 0 ? Models.materials.white : Models.materials.black;
+                const sharedMat = Models._getSharedMaterial(teamCfg, isDoubleSide(pdata.name));
+                if (!sharedMat) continue;
+                const im = new THREE.InstancedMesh(geom, sharedMat, MAX_INSTANCES);
+                im.count = 0; // start empty; spawnPiece will increment
+                im.frustumCulled = false; // pieces span 64 slices; no useful single bbox
+                im.castShadow = false;
+                im.receiveShadow = false;
+                im.userData.typeKey = pdata.name;
+                im.userData.team = team;
+                // Per-instance color attribute for hover/select highlight (M7d).
+                // Default color is white (1,1,1) which multiplies the shared
+                // material color by identity (no tint).
+                const colors = new Float32Array(MAX_INSTANCES * 3);
+                for (let i = 0; i < colors.length; i++) colors[i] = 1.0;
+                im.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+                im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+                if (parentObject3D) parentObject3D.add(im);
+                out[`${pdata.name}-${team}`] = im;
+            }
+        }
+        Models._instancedMeshes = out;
+        Models._instanceLookup = lookup;
+        return out;
+    },
+
+    // M7d: allocate a slot in the appropriate InstancedMesh for `piece`,
+    // write its initial transform, register the reverse-lookup. Returns
+    // {im, id} or null if allocation failed.
+    allocInstanceSlot: function (piece, x, y, z, rotateY) {
+        if (!Models._instancedMeshes) return null;
+        const typeKey = `${piece.type}-${piece.team}`;
+        const im = Models._instancedMeshes[typeKey];
+        if (!im) return null;
+        if (im.count >= im.instanceMatrix.count) {
+            console.warn('[m7d] InstancedMesh full for', typeKey);
+            return null;
+        }
+        const id = im.count++;
+        const matrix = new THREE.Matrix4();
+        const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotateY || 0, 0));
+        const scl = new THREE.Vector3(Models.SCALE_FACTOR, Models.SCALE_FACTOR, Models.SCALE_FACTOR);
+        matrix.compose(new THREE.Vector3(x, y, z), rot, scl);
+        im.setMatrixAt(id, matrix);
+        im.instanceMatrix.needsUpdate = true;
+        Models._instanceLookup.set(`${typeKey}-${id}`, piece);
+        return { im, id, typeKey };
+    },
+
+    // M7d: write the piece's current mesh.matrixWorld into its instance slot.
+    // Called from animate() each dirty frame to sync animations / moves /
+    // capture-hide into the InstancedMesh transforms.
+    syncInstanceMatrix: function (piece) {
+        if (!piece || !piece.instanceSlot || !piece.mesh) return;
+        piece.mesh.updateMatrixWorld();
+        piece.instanceSlot.im.setMatrixAt(piece.instanceSlot.id, piece.mesh.matrixWorld);
+        piece.instanceSlot.im.instanceMatrix.needsUpdate = true;
+    },
+
+    // M7d: highlight tint via per-instance color. Setting (1,1,1) restores
+    // the shared material's base color; any other RGB tints multiplicatively.
+    setInstanceColor: function (piece, r, g, b) {
+        if (!piece || !piece.instanceSlot) return;
+        const im = piece.instanceSlot.im;
+        if (!im.instanceColor) return;
+        im.instanceColor.setXYZ(piece.instanceSlot.id, r, g, b);
+        im.instanceColor.needsUpdate = true;
+    },
+
     createMesh: function(piece, material, x=0, y=0, z=0, scale=1, canRayCast=true){
 
         const pieceData = Models.pieceData[Models.pieceIndices[piece]]
