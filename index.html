@@ -16,8 +16,24 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
     <script src="js/tutorial.js"></script>
+
+    <!-- Pyodide bridge: spawns the worker, micropip-installs chess-spectral
+         and chess4d, sets window.__SMOKE_READY__ when done. Kicked off
+         here so cold-boot runs in parallel with Three.js + OBJ loading. -->
+    <script src="js/spectral_bridge.js"></script>
 </head>
 <body>
+    <!-- Engine loading overlay — blocks UI until spectral_bridge.init() resolves. -->
+    <div id="engine-loading-overlay" role="status" aria-live="polite">
+      <div class="engine-loading-content">
+        <div class="engine-loading-spinner" aria-hidden="true"></div>
+        <p class="engine-loading-title">Loading 4D engine</p>
+        <p class="engine-loading-detail">Booting Pyodide and installing chess-spectral &middot; chess4d&hellip;</p>
+      </div>
+    </div>
+
+    <!-- Optional debug status (toggled visible via ?debug=1 in main.js) -->
+    <div id="engine-debug-status"></div>
     <!-- Header Bar -->
     <header class="header-bar">
         <h1 class="title">
@@ -388,12 +404,16 @@
     <!-- Main application -->
     <script src="js/main.js?v=2"></script>
 
-    <!-- Smoke-test ready signal. M2 fires on window.load; M3 will replace
-         this with a gate that waits for spectral_bridge.init() to resolve. -->
+    <!-- Debug status panel toggle: append ?debug=1 to the URL to show the
+         engine status overlay (versions, constants, piece count). The
+         signal-ready (window.__SMOKE_READY__) is set by spectral_bridge.js. -->
     <script>
-      window.addEventListener('load', () => {
-        window.__SMOKE_READY__ = true;
-      });
+      (function () {
+        if (new URLSearchParams(location.search).get('debug') === '1') {
+          var el = document.getElementById('engine-debug-status');
+          if (el) el.classList.add('engine-debug-status--visible');
+        }
+      })();
     </script>
 </body>
 </html>

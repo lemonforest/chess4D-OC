@@ -48,6 +48,10 @@ export default [
         // CDN-loaded
         THREE: 'readonly',
         OBJLoader: 'readonly',
+        // Worker globals (used by js/spectral_worker.js)
+        self: 'readonly',
+        importScripts: 'readonly',
+        loadPyodide: 'readonly',
         // Project globals — declared in script-loaded files, used across the codebase.
         // Marked 'writable' so no-redeclare doesn't fire on the declaring file.
         GameBoard: 'writable',
