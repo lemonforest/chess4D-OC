@@ -181,29 +181,64 @@
             
             <!-- Spectral Overlay (M5+) -->
             <section class="card spectral-card">
-                <h3>Spectral Overlay</h3>
+                <div class="spectral-header">
+                    <h3>Spectral Overlay</h3>
+                    <button type="button" class="spectral-help-btn" id="spectral-help-btn"
+                            aria-label="What is this?" aria-expanded="false"
+                            aria-controls="spectral-help">?</button>
+                </div>
                 <div class="spectral-control">
                     <label for="spectral-channel">Channel:</label>
                     <select id="spectral-channel" aria-label="Spectral channel for hover overlay">
-                        <option value="off">Off</option>
+                        <option value="off" title="No overlay — destinations render with the default green tint.">Off</option>
                         <optgroup label="Fast (delta — linear)">
-                            <option value="A1" selected>A1 — orbit projection</option>
-                            <option value="STD4_X">STD4_X</option>
-                            <option value="STD4_Y">STD4_Y</option>
-                            <option value="STD4_Z">STD4_Z</option>
-                            <option value="STD4_W">STD4_W</option>
+                            <option value="A1" selected
+                                title="Orbit projection — overall complexity of the position. Default channel.">A1 — orbit projection</option>
+                            <option value="STD4_X"
+                                title="Coord-residual along X. Highlights moves that shift the piece distribution along the X axis.">STD4_X</option>
+                            <option value="STD4_Y"
+                                title="Coord-residual along Y.">STD4_Y</option>
+                            <option value="STD4_Z"
+                                title="Coord-residual along Z (depth slices).">STD4_Z</option>
+                            <option value="STD4_W"
+                                title="Coord-residual along W (the 4th dimension).">STD4_W</option>
                         </optgroup>
                         <optgroup label="Slow (full re-encode — nonlinear)">
-                            <option value="FIB_SYM_1">FIB_SYM_1</option>
-                            <option value="FIB_SYM_2">FIB_SYM_2</option>
-                            <option value="FIB_SYM_3">FIB_SYM_3</option>
-                            <option value="FA_PAWN_W">FA_PAWN_W</option>
-                            <option value="FA_PAWN_Y">FA_PAWN_Y</option>
-                            <option value="FD_DIAG">FD_DIAG</option>
+                            <option value="FIB_SYM_1"
+                                title="Fiber-symmetric basis #1. Cross-piece interaction; nonlinear, no fast delta.">FIB_SYM_1</option>
+                            <option value="FIB_SYM_2"
+                                title="Fiber-symmetric basis #2.">FIB_SYM_2</option>
+                            <option value="FIB_SYM_3"
+                                title="Fiber-symmetric basis #3.">FIB_SYM_3</option>
+                            <option value="FA_PAWN_W"
+                                title="Pawn-antisymmetric channel for W-oriented pawns. Useful in endgames.">FA_PAWN_W</option>
+                            <option value="FA_PAWN_Y"
+                                title="Pawn-antisymmetric channel for Y-oriented pawns.">FA_PAWN_Y</option>
+                            <option value="FD_DIAG"
+                                title="Diagonal-antisymmetric channel.">FD_DIAG</option>
                         </optgroup>
                     </select>
                 </div>
                 <p class="spectral-hint" id="spectral-hint">Engine loading&hellip;</p>
+
+                <!-- M9 help popover: hidden by default, toggled by the ? button. -->
+                <div class="spectral-help" id="spectral-help" hidden>
+                    <p><strong>What is this?</strong> When you click a piece, each legal destination is tinted by the post-move spectral signature for the chosen channel. Brighter destinations &approx; bigger spectral change &approx; more positional shake-up.</p>
+                    <p>The encoder produces an 11-channel signature; the dropdown picks which one drives the color:</p>
+                    <dl class="spectral-help-list">
+                        <dt>A1 <span class="spectral-help-tag">default</span></dt>
+                        <dd>Orbit projection — overall complexity. Best general intuition.</dd>
+                        <dt>STD4_X / Y / Z / W</dt>
+                        <dd>Coordinate-residuals along each of the 4 axes. Highlights moves that shift the piece distribution along that one dimension.</dd>
+                        <dt>FIB_SYM_1 / 2 / 3</dt>
+                        <dd>Cross-piece interaction (rank-3 SVD basis). Slow — needs a full re-encode per destination.</dd>
+                        <dt>FA_PAWN_W / FA_PAWN_Y</dt>
+                        <dd>Pawn-antisymmetric channels, one per pawn axis (Oana &amp; Chiru §3.10 Def. 11).</dd>
+                        <dt>FD_DIAG</dt>
+                        <dd>Diagonal-antisymmetric.</dd>
+                    </dl>
+                    <p class="spectral-help-foot">Math: see <a href="https://doi.org/10.3390/appliedmath6030048" target="_blank" rel="noopener">Oana &amp; Chiru (2026)</a> and the <a href="https://pypi.org/project/chess-spectral/" target="_blank" rel="noopener">chess-spectral</a> docs.</p>
+                </div>
             </section>
 
             <!-- Action Buttons -->
@@ -486,6 +521,26 @@
           if (el) el.classList.add('engine-debug-status--visible');
         }
       });
+    </script>
+
+    <!-- M9 spectral help-popover toggle. The button doesn't depend on any
+         app code, just the DOM, so no need to wait for chess4d-app-ready. -->
+    <script>
+      (function () {
+        var btn = document.getElementById('spectral-help-btn');
+        var pop = document.getElementById('spectral-help');
+        if (!btn || !pop) return;
+        btn.addEventListener('click', function () {
+          var open = pop.hasAttribute('hidden') === false;
+          if (open) {
+            pop.setAttribute('hidden', '');
+            btn.setAttribute('aria-expanded', 'false');
+          } else {
+            pop.removeAttribute('hidden');
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      })();
     </script>
 </body>
 </html>
