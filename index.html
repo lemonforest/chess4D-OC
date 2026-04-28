@@ -54,7 +54,7 @@
 
     <div class="main-container">
         <!-- Left Panel: Control Panel -->
-        <aside class="control-panel">
+        <aside class="control-panel" aria-label="Game controls">
             <!-- Game Status -->
             <section class="card status-card">
                 <h3>Game Status</h3>
@@ -298,7 +298,7 @@
             </div>
         </main>
         <!-- Right Panel: Navigation Panel -->
-        <aside class="nav-panel">
+        <aside class="nav-panel" aria-label="4D navigation">
             <section class="card nav-card">
                 <h3>4D Navigation</h3>
                 
@@ -387,6 +387,14 @@
     
     <!-- Main application -->
     <script src="js/main.js?v=2"></script>
+
+    <!-- Smoke-test ready signal. M2 fires on window.load; M3 will replace
+         this with a gate that waits for spectral_bridge.init() to resolve. -->
+    <script>
+      window.addEventListener('load', () => {
+        window.__SMOKE_READY__ = true;
+      });
+    </script>
 </body>
 </html>
 
