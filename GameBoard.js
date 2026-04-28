@@ -189,54 +189,47 @@ GameBoard.prototype = {
 	},
 	
 	hasLegalMoves: function(team) {
-		// PERFORMANCE: Limit the number of pieces we check to avoid freezing
-		// Instead of checking all 448 pieces, check a sample and use early exit
-		let piecesChecked = 0;
-		const MAX_PIECES_TO_CHECK = 50; // Limit to first 50 pieces found to avoid freezing
-		
-		// Check all pieces of this team
+		// M4b: full check across all of `team`'s pieces, no caps. Earlier
+		// the function bailed at MAX_PIECES_TO_CHECK=50 and
+		// MAX_MOVES_TO_CHECK=20 to avoid freezing the page on win-condition
+		// checks — but those caps SILENTLY LIED about stalemate / checkmate
+		// on full 4D positions (~448 pieces per side) and shipped the
+		// upstream's "false-stalemate" bug into chess4D-OC. We accept the
+		// occasional ~hundreds-of-ms freeze on the unhappy path (real
+		// stalemate or checkmate) in exchange for correct results.
+		//
+		// Future M4b.1: route this through SpectralBridge.legalMoves once
+		// the call chain is async-friendly; chess4d's legality is much
+		// faster than the JS clone-and-test path (~50ms vs ~hundreds).
+		// For now, the bound on this function is 448 pieces × ~80 moves
+		// × isMoveLegal cost (~448 iterations for inCheck), worst case.
+		// The first legal move found triggers early-exit so the happy
+		// path stays cheap.
 		for (let x = 0; x < this.n; x++) {
 			for (let y = 0; y < this.n; y++) {
 				for (let z = 0; z < this.n; z++) {
 					for (let w = 0; w < this.n; w++) {
 						const piece = this.pieces[x][y][z][w];
-						if (piece && piece.type && piece.team === team) {
-							piecesChecked++;
-							
-							// PERFORMANCE: Limit pieces checked to avoid freezing on large boards
-							if (piecesChecked > MAX_PIECES_TO_CHECK) {
-								// We've checked enough pieces - if we haven't found a legal move yet,
-								// it's likely there are none (or very few). Return false for safety.
-								// This prevents the game from freezing.
-								return false;
-							}
-							
-							try {
-								const possibleMoves = piece.getPossibleMoves(this.pieces, x, y, z, w);
-								
-								if (possibleMoves && possibleMoves.length > 0) {
-									// PERFORMANCE: Limit moves checked per piece
-									const MAX_MOVES_TO_CHECK = 20;
-									const movesToCheck = possibleMoves.slice(0, MAX_MOVES_TO_CHECK);
-									
-									// Check if any move is legal
-									for (const move of movesToCheck) {
-										if (this.isMoveLegal(x, y, z, w, move.x, move.y, move.z, move.w, team)) {
-											return true; // Found at least one legal move - early exit!
-										}
-									}
+						if (!piece || !piece.type || piece.team !== team) continue;
+						try {
+							const possibleMoves = piece.getPossibleMoves(this.pieces, x, y, z, w);
+							if (!possibleMoves || possibleMoves.length === 0) continue;
+							for (const move of possibleMoves) {
+								if (this.isMoveLegal(x, y, z, w, move.x, move.y, move.z, move.w, team)) {
+									return true; // Early exit — at least one legal move exists.
 								}
-							} catch (error) {
-								// Skip this piece if there's an error
-								continue;
 							}
+						} catch (error) {
+							// Skip a piece whose generator throws; treat as "no moves"
+							// rather than letting the error abort the entire scan.
+							continue;
 						}
 					}
 				}
 			}
 		}
-		
-		return false; // No legal moves found
+
+		return false;
 	},
 	
 	isMoveLegal: function(x0, y0, z0, w0, x1, y1, z1, w1, team) {
