@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>chess4D-OC Parity Harness</title>
+  <style>
+    body { background: #0a0e27; color: #e2e2e2; font: 14px ui-monospace, SFMono-Regular, monospace; padding: 20px; }
+    h1 { font-size: 18px; }
+    #status { padding: 8px 12px; border-radius: 4px; background: #1a1f3a; margin: 12px 0; }
+    #status.ok { color: #00ff88; }
+    #status.err { color: #ff3366; }
+    #status.busy { color: #ffaa00; }
+    button { background: #00d4ff; color: #0a0e27; border: 0; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; }
+    table { border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #333; padding: 6px 10px; text-align: left; }
+    th { background: #1a1f3a; }
+    .ok { color: #00ff88; }
+    .diff { color: #ff3366; }
+    .skipped { color: #ffaa00; }
+    pre#raw-output { max-height: 400px; overflow: auto; background: #1a1f3a; padding: 12px; border-radius: 4px; font-size: 11px; }
+  </style>
+
+  <!-- Three.js + OBJLoader (some Piece classes may reference THREE globally) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- JS legality engine — same chain as the live app -->
+  <script src="../js/pieces/Piece.js?v=3"></script>
+  <script src="../js/pieces/Pawn.js?v=3"></script>
+  <script src="../js/pieces/Rook.js?v=3"></script>
+  <script src="../js/pieces/Bishop.js?v=3"></script>
+  <script src="../js/pieces/Knight.js?v=3"></script>
+  <script src="../js/pieces/Queen.js?v=3"></script>
+  <script src="../js/pieces/King.js?v=3"></script>
+
+  <!-- Pyodide bridge — boots Pyodide and chess-spectral in parallel -->
+  <script src="../js/spectral_bridge.js"></script>
+</head>
+<body>
+  <h1>chess4D-OC Parity Harness</h1>
+  <div id="status" class="busy">Booting Pyodide...</div>
+  <div>
+    <button id="btn-run" disabled>Run parity</button>
+    <button id="btn-download" disabled>Download diff JSON</button>
+    <span id="counts"></span>
+  </div>
+  <table id="summary" hidden>
+    <thead><tr><th>Piece type</th><th>Tested</th><th>Match</th><th>Diff</th><th>Skipped</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <h3>Raw output</h3>
+  <pre id="raw-output"></pre>
+
+  <script>
+    'use strict';
+
+    // Map normalized Python piece-type names to JS classes. Python's chess4d
+    // may report types in various forms (kind/piece_type/type/class name);
+    // normalizePieceType collapses common variants.
+    const TYPE_TO_CLASS = {
+      pawn: typeof Pawn !== 'undefined' ? Pawn : null,
+      rook: typeof Rook !== 'undefined' ? Rook : null,
+      bishop: typeof Bishop !== 'undefined' ? Bishop : null,
+      knight: typeof Knight !== 'undefined' ? Knight : null,
+      queen: typeof Queen !== 'undefined' ? Queen : null,
+      king: typeof King !== 'undefined' ? King : null,
+    };
+
+    function normalizePieceType(t) {
+      if (!t) return null;
+      const s = String(t).toLowerCase();
+      if (s.startsWith('p')) return 'pawn';
+      if (s.startsWith('r')) return 'rook';
+      if (s.startsWith('b')) return 'bishop';
+      if (s.startsWith('n') || s === 'knight') return 'knight';
+      if (s.startsWith('q')) return 'queen';
+      if (s.startsWith('k')) return 'king';
+      return s;
+    }
+
+    // Build an empty 8x8x8x8 board where each cell is a {type:null, team:null}
+    // marker — the shape JS Piece subclasses expect for empty squares.
+    function emptyBoard() {
+      const board = [];
+      for (let x = 0; x < 8; x++) {
+        board.push([]);
+        for (let y = 0; y < 8; y++) {
+          board[x].push([]);
+          for (let z = 0; z < 8; z++) {
+            board[x][y].push([]);
+            for (let w = 0; w < 8; w++) {
+              board[x][y][z].push({ type: null, team: null });
+            }
+          }
+        }
+      }
+      return board;
+    }
+
+    // Populate a JS board from Python's piece list. Returns { board, missing }
+    // where missing is the count of pieces whose type didn't map to a JS class.
+    function buildJsBoard(pyPieces) {
+      const board = emptyBoard();
+      let missing = 0;
+      for (const p of pyPieces) {
+        if (p.x < 0 || p.y < 0 || p.z < 0 || p.w < 0) continue;
+        const norm = normalizePieceType(p.type);
+        const Cls = TYPE_TO_CLASS[norm];
+        if (!Cls) { missing++; continue; }
+        const piece = new Cls(p.team);
+        piece.position = { x: p.x, y: p.y, z: p.z, w: p.w };
+        piece.hasMoved = false;
+        board[p.x][p.y][p.z][p.w] = piece;
+      }
+      return { board, missing };
+    }
+
+    function squareKey(s) { return `${s.x},${s.y},${s.z},${s.w}`; }
+    function setOf(arr) { return new Set(arr.map(squareKey)); }
+    function diffSets(a, b) {
+      const onlyA = []; const onlyB = [];
+      for (const k of a) if (!b.has(k)) onlyA.push(k);
+      for (const k of b) if (!a.has(k)) onlyB.push(k);
+      return { onlyA, onlyB };
+    }
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(msg, klass) {
+      const el = $('status');
+      el.textContent = msg;
+      el.className = klass || '';
+    }
+
+    let lastResults = null;
+
+    async function runParity() {
+      $('btn-run').disabled = true;
+      setStatus('Listing pieces in initial position...', 'busy');
+
+      const pyPieces = await SpectralBridge.listInitialPieces();
+      const { board: jsBoard, missing } = buildJsBoard(pyPieces);
+      setStatus(`Listed ${pyPieces.length} pieces (${missing} unmapped). Computing legal moves...`, 'busy');
+
+      const results = [];
+      let i = 0;
+      for (const p of pyPieces) {
+        i++;
+        if (i % 50 === 0) {
+          setStatus(`Comparing piece ${i}/${pyPieces.length}...`, 'busy');
+          await new Promise((r) => setTimeout(r, 0)); // yield to UI
+        }
+
+        const origin = { x: p.x, y: p.y, z: p.z, w: p.w };
+        const norm = normalizePieceType(p.type);
+        const jsPiece = jsBoard[p.x] && jsBoard[p.x][p.y] && jsBoard[p.x][p.y][p.z] && jsBoard[p.x][p.y][p.z][p.w];
+
+        let pyResult;
+        try {
+          pyResult = await SpectralBridge.legalMovesAtInitial(origin);
+        } catch (err) {
+          pyResult = { ok: false, reason: `bridge-error: ${err.message}`, moves: [] };
+        }
+
+        let jsMoves = null;
+        let jsError = null;
+        if (jsPiece && jsPiece.type && typeof jsPiece.getPossibleMoves === 'function') {
+          try {
+            jsMoves = jsPiece.getPossibleMoves(jsBoard, p.x, p.y, p.z, p.w) || [];
+          } catch (err) {
+            jsError = `${err.name}: ${err.message}`;
+          }
+        }
+
+        const jsSet = setOf(jsMoves || []);
+        const pySet = setOf(pyResult.moves || []);
+        const diff = diffSets(jsSet, pySet);
+
+        let verdict;
+        if (!pyResult.ok) verdict = 'skipped-py';
+        else if (jsMoves === null) verdict = 'skipped-js';
+        else if (diff.onlyA.length === 0 && diff.onlyB.length === 0) verdict = 'match';
+        else verdict = 'diff';
+
+        results.push({
+          origin,
+          piece: { type: norm, raw_type: p.type, team: p.team },
+          js: { moves: jsMoves, error: jsError, count: jsSet.size },
+          py: { ok: pyResult.ok, reason: pyResult.reason, moves: pyResult.moves, count: pySet.size },
+          diff,
+          verdict,
+        });
+      }
+
+      lastResults = {
+        timestamp: new Date().toISOString(),
+        spectral_info: window.__SPECTRAL_INFO__ || null,
+        total: results.length,
+        match: results.filter((r) => r.verdict === 'match').length,
+        diff: results.filter((r) => r.verdict === 'diff').length,
+        skipped_js: results.filter((r) => r.verdict === 'skipped-js').length,
+        skipped_py: results.filter((r) => r.verdict === 'skipped-py').length,
+        unmapped_in_corpus: missing,
+        results,
+      };
+      window.__PARITY_RESULTS__ = lastResults;
+
+      const byType = {};
+      for (const r of results) {
+        const t = r.piece.type || '?';
+        if (!byType[t]) byType[t] = { tested: 0, match: 0, diff: 0, skipped: 0 };
+        byType[t].tested++;
+        if (r.verdict === 'match') byType[t].match++;
+        else if (r.verdict === 'diff') byType[t].diff++;
+        else byType[t].skipped++;
+      }
+      const tbody = $('summary').querySelector('tbody');
+      tbody.innerHTML = '';
+      for (const [t, c] of Object.entries(byType)) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td>${t}</td>` +
+          `<td>${c.tested}</td>` +
+          `<td class="ok">${c.match}</td>` +
+          `<td class="${c.diff > 0 ? 'diff' : ''}">${c.diff}</td>` +
+          `<td class="skipped">${c.skipped}</td>`;
+        tbody.appendChild(tr);
+      }
+      $('summary').hidden = false;
+
+      $('counts').textContent =
+        ` ${lastResults.match} match / ${lastResults.diff} diff / ${lastResults.skipped_js + lastResults.skipped_py} skipped`;
+      $('raw-output').textContent = JSON.stringify(lastResults, null, 2);
+
+      if (lastResults.diff > 0) {
+        setStatus(`Parity FAILED: ${lastResults.diff} disagreement(s) across ${lastResults.total} pieces.`, 'err');
+      } else if (lastResults.skipped_js + lastResults.skipped_py > 0) {
+        setStatus(
+          `Parity inconclusive: ${lastResults.match}/${lastResults.total} match, ${lastResults.skipped_js + lastResults.skipped_py} skipped (engine API gap).`,
+          'err'
+        );
+      } else {
+        setStatus(`Parity PASSED: ${lastResults.match}/${lastResults.total} pieces agree.`, 'ok');
+      }
+      $('btn-run').disabled = false;
+      $('btn-download').disabled = false;
+      window.__PARITY_DONE__ = true;
+    }
+
+    function downloadResults() {
+      if (!lastResults) return;
+      const blob = new Blob([JSON.stringify(lastResults, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `parity-${lastResults.timestamp.replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    $('btn-run').addEventListener('click', runParity);
+    $('btn-download').addEventListener('click', downloadResults);
+
+    // Wait for the bridge to be ready, then enable Run.
+    (async () => {
+      try {
+        await SpectralBridge.init();
+        setStatus('Pyodide ready. Click "Run parity" to compare engines.', 'ok');
+        $('btn-run').disabled = false;
+        // Auto-run for headless test environments — Playwright will pick
+        // up window.__PARITY_DONE__ instead of waiting for the click.
+        if (new URLSearchParams(location.search).get('auto') === '1') {
+          await runParity();
+        }
+      } catch (err) {
+        setStatus(`Bridge init failed: ${err.message}`, 'err');
+      }
+    })();
+  </script>
+</body>
+</html>

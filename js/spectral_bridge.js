@@ -56,6 +56,11 @@
     getStatus: () => call('getStatus'),
     getConstants: () => call('getConstants'),
     getInitialPositionInfo: () => call('getInitialPositionInfo'),
+    // M3.5 parity helpers — not part of the long-term API. M4a will
+    // replace these with general legalMoves(state, origin) once
+    // Pyodide owns the canonical state.
+    listInitialPieces: () => call('listInitialPieces'),
+    legalMovesAtInitial: (origin) => call('legalMovesAtInitial', origin),
   };
   window.SpectralBridge = bridge;
 
