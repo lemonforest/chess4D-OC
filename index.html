@@ -122,9 +122,21 @@
                     <label for="spectral-channel">Channel:</label>
                     <select id="spectral-channel" aria-label="Spectral channel for hover overlay">
                         <option value="off">Off</option>
-                        <option value="A1" selected>A1 (overall complexity)</option>
-                        <option value="B2">B2 (diagonal-orbit anisotropy)</option>
-                        <option value="FA">FA (pawn-anti)</option>
+                        <optgroup label="Fast (delta — linear)">
+                            <option value="A1" selected>A1 — orbit projection</option>
+                            <option value="STD4_X">STD4_X</option>
+                            <option value="STD4_Y">STD4_Y</option>
+                            <option value="STD4_Z">STD4_Z</option>
+                            <option value="STD4_W">STD4_W</option>
+                        </optgroup>
+                        <optgroup label="Slow (full re-encode — nonlinear)">
+                            <option value="FIB_SYM_1">FIB_SYM_1</option>
+                            <option value="FIB_SYM_2">FIB_SYM_2</option>
+                            <option value="FIB_SYM_3">FIB_SYM_3</option>
+                            <option value="FA_PAWN_W">FA_PAWN_W</option>
+                            <option value="FA_PAWN_Y">FA_PAWN_Y</option>
+                            <option value="FD_DIAG">FD_DIAG</option>
+                        </optgroup>
                     </select>
                 </div>
                 <p class="spectral-hint" id="spectral-hint">Engine loading&hellip;</p>

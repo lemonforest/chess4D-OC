@@ -35,7 +35,7 @@ async function ensureInit() {
     // wheel) doesn't block the others. We then probe what actually imported
     // and surface the gap to JS via the `packages` field of the init result.
     await micropip.install(
-      ['chess-spectral>=1.3.0', 'python-chess4d-oana-chiru>=0.3.3'],
+      ['chess-spectral>=1.3.1', 'python-chess4d-oana-chiru>=0.3.3'],
       true /* keep_going */
     );
 
@@ -359,16 +359,26 @@ result
       .toJs({ dict_converter: Object.fromEntries, depth: 4 });
   },
 
-  // M5 hover spectral preview — for each legal destination from `origin`,
-  // applies the move to a temp state, runs encode_4d, and extracts the
-  // intensity at the destination cell across all available channels.
+  // M6 hover spectral preview — caches the current-state encoding and uses
+  // closed-form delta math for the linear channels (A1 + STD4_X/Y/Z/W)
+  // instead of re-encoding once per candidate destination. For nonlinear
+  // channels (FIB_SYM_*, FA_PAWN_*, FD_DIAG) the value at the dest cell
+  // depends on neighborhood structure, so we return null intensity in
+  // the fast path and let JS fall back to default rendering.
   //
-  // Slow on v0.1: O(legal_moves * encoder_time). 80-move queens can take
-  // a few seconds in Pyodide. M6 replaces the per-move re-encode with a
-  // phase-shift delta on a cached current-state encoding.
+  // Math (see chess_spectral/encoder_4d.py for definitions):
+  //   sig[s] = piece_value[piece_at(s)]                (sparse)
+  //   A1     = P_A1 @ sig                              (matrix-vec)
+  //   STD4_a = coord_resid[a] * sig                    (element-wise)
   //
-  // Gracefully returns ok=false when the encoder isn't installed yet
-  // (chess-spectral wheel pending). JS falls back to default rendering.
+  // For a move origin -> dest:
+  //   delta_sig[origin] = -sig_before[origin]
+  //   delta_sig[dest]   = piece_value(moving) - sig_before[dest]
+  //   A1_after[d] = A1_before[d] + P_A1[d, origin]*Δo + P_A1[d, dest]*Δd
+  //   STD4_a_after[d] = coord_resid[a][d] * sig_after[d]
+  //
+  // The encoder cache is refreshed whenever _move_history advances so
+  // applyMove invalidates it implicitly.
   previewEncoding(args) {
     if (status !== 'ready') {
       throw new Error(`Worker not ready (status=${status})`);
@@ -382,32 +392,31 @@ result
       .runPython(
         `
 import chess4d
+import numpy as np
 try:
     _move_history
 except NameError:
     _move_history = []
 
-origin = (int(_origin_x), int(_origin_y), int(_origin_z), int(_origin_w))
-
-# Try to load encoder + channel names. Both are best-effort; missing is OK.
-encode_4d = None
+# Try to load encoder pieces. encode_4d + board_signal_4d + _load_tables
+# are all in chess_spectral.encoder_4d as of v1.3.1.
 encoder_err = None
+encode_4d = None
+board_signal_4d = None
+_load_tables = None
+CHANNELS_4D = None
 try:
-    from chess_spectral.encoder_4d import encode_4d
+    from chess_spectral.encoder_4d import (
+        encode_4d, board_signal_4d, _load_tables, CHANNELS_4D as _CH,
+    )
+    CHANNELS_4D = list(_CH)
 except Exception as e:
     encoder_err = f'{type(e).__name__}: {e}'
 
-CHANNEL_NAMES = None
-try:
-    from chess_spectral.encoder_4d import CHANNEL_NAMES as _CN
-    CHANNEL_NAMES = list(_CN)
-except Exception:
-    try:
-        # Some chess-spectral versions expose channel names elsewhere.
-        from chess_spectral import CHANNEL_NAMES as _CN
-        CHANNEL_NAMES = list(_CN)
-    except Exception:
-        CHANNEL_NAMES = None
+origin = (int(_origin_x), int(_origin_y), int(_origin_z), int(_origin_w))
+
+def _sq4(x, y, z, w):
+    return (int(x) << 9) | (int(y) << 6) | (int(z) << 3) | int(w)
 
 def _try_apply(state, o, d):
     for fn_name in ('apply_move', 'make_move', 'move', 'do_move', 'push'):
@@ -425,6 +434,43 @@ def _try_apply(state, o, d):
             except Exception:
                 continue
     raise RuntimeError('apply-move api missing')
+
+def _state_to_pos4(state):
+    """Best-effort chess4d state -> {sq_idx: piece_value} for encode_4d.
+    Pawn axis defaults to 'y'; if chess4d exposes a per-pawn axis attr we
+    pick it up automatically."""
+    pos4 = {}
+    pieces = []
+    if hasattr(state, 'board'):
+        b = state.board
+        if hasattr(b, 'pieces'):
+            try:
+                pieces = [p for p in b.pieces if p is not None and getattr(p, 'kind', getattr(p, 'piece_type', getattr(p, 'type', None)))]
+            except Exception:
+                pieces = []
+    if not pieces and hasattr(state, 'pieces'):
+        try:
+            pieces = [p for p in state.pieces if p is not None and getattr(p, 'kind', getattr(p, 'piece_type', getattr(p, 'type', None)))]
+        except Exception:
+            pieces = []
+    for p in pieces:
+        x = getattr(p, 'x', None)
+        y = getattr(p, 'y', None)
+        z = getattr(p, 'z', None)
+        w = getattr(p, 'w', None)
+        if any(v is None for v in (x, y, z, w)):
+            continue
+        team = getattr(p, 'team', getattr(p, 'color', getattr(p, 'side', 0)))
+        ptype_raw = str(getattr(p, 'kind', getattr(p, 'piece_type', getattr(p, 'type', 'P'))))
+        first = ptype_raw[0].upper() if ptype_raw else 'P'
+        char = first if int(team) == 0 else first.lower()
+        if first == 'P':
+            axis = getattr(p, 'axis', 'y')
+            value = (char, str(axis).lower())
+        else:
+            value = char
+        pos4[_sq4(x, y, z, w)] = value
+    return pos4
 
 def _piece_at(s, coords):
     if hasattr(s, 'board'):
@@ -457,7 +503,7 @@ def _piece_at(s, coords):
                 return p
     return None
 
-# Rebuild current state from history.
+# Rebuild current state from history (replay all moves from initial).
 state = chess4d.initial_position()
 for (o, d) in _move_history:
     try:
@@ -466,103 +512,163 @@ for (o, d) in _move_history:
         pass
 
 piece = _piece_at(state, origin)
-if piece is None:
-    result = {'ok': False, 'reason': 'no-piece-at-origin', 'previews': []}
-elif encode_4d is None:
-    # No encoder yet — return the legal destinations with null intensities
-    # so the JS path can still render destinations (just without overlay).
-    moves_list = []
+
+# Get legal destinations (same as legalMoves uses).
+def _legal_dests(state, origin, piece):
+    if piece is None:
+        return []
     try:
-        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import occupation_aware_moves_a_4d
-        moves_list = list(occupation_aware_moves_a_4d(state, origin, piece))
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import (
+            occupation_aware_moves_a_4d,
+        )
+        return list(occupation_aware_moves_a_4d(state, origin, piece))
     except Exception:
         try:
             all_legal = chess4d.legal_moves(state)
-            moves_list = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
+            return [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
         except Exception:
-            moves_list = []
-    previews = []
-    for m in moves_list:
-        try:
-            t = tuple(m)[:4]
-        except TypeError:
-            t = (
-                getattr(m, 'x', None), getattr(m, 'y', None),
-                getattr(m, 'z', None), getattr(m, 'w', None),
-            )
-        if all(v is not None for v in t):
-            previews.append({
-                'dest': {'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])},
-                'intensities': None,
-            })
+            return []
+
+dests_raw = _legal_dests(state, origin, piece)
+dests = []
+for m in dests_raw:
+    try:
+        t = tuple(m)[:4]
+    except TypeError:
+        t = (
+            getattr(m, 'x', None), getattr(m, 'y', None),
+            getattr(m, 'z', None), getattr(m, 'w', None),
+        )
+    if all(v is not None for v in t):
+        dests.append((int(t[0]), int(t[1]), int(t[2]), int(t[3])))
+
+if piece is None:
+    result = {'ok': False, 'reason': 'no-piece-at-origin', 'previews': []}
+elif encode_4d is None:
+    # Encoder unavailable — surface destinations with null intensities so
+    # the JS overlay knows to fall back to default rendering.
     result = {
         'ok': False,
         'reason': f'encoder unavailable: {encoder_err}',
         'channels': None,
-        'previews': previews,
+        'previews': [{'dest': {'x': d[0], 'y': d[1], 'z': d[2], 'w': d[3]}, 'intensities': None} for d in dests],
     }
 else:
-    # Get legal destinations.
-    moves_list = []
+    # ---- M6 fast path: cache current encoding + linear-channel delta ----
+    # Cache is keyed on len(_move_history); applyMove implicitly invalidates.
     try:
-        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import occupation_aware_moves_a_4d
-        moves_list = list(occupation_aware_moves_a_4d(state, origin, piece))
-    except Exception:
-        try:
-            all_legal = chess4d.legal_moves(state)
-            moves_list = [m.dest for m in all_legal if getattr(m, 'origin', None) == origin]
-        except Exception:
-            moves_list = []
+        _encoder_cache
+    except NameError:
+        _encoder_cache = None
 
-    # For each dest, apply -> encode -> extract intensity at the dest cell
-    # across all channels. Cell index uses the standard row-major
-    # (x*512 + y*64 + z*8 + w) ordering — confirmed by chess_spectral's
-    # PHI_TO_XYZW reverse mapping when x is most-significant.
-    previews = []
-    channel_count = None
-    for m in moves_list:
+    if _encoder_cache is None or _encoder_cache.get('history_len') != len(_move_history):
         try:
-            t = tuple(m)[:4]
-        except TypeError:
-            t = (
-                getattr(m, 'x', None), getattr(m, 'y', None),
-                getattr(m, 'z', None), getattr(m, 'w', None),
-            )
-        if not all(v is not None for v in t):
-            continue
-        dest = {'x': int(t[0]), 'y': int(t[1]), 'z': int(t[2]), 'w': int(t[3])}
-        try:
-            temp_state = _try_apply(state, origin, t)
-            vec = encode_4d(temp_state)
-            n = len(vec)
-            ch_dim = 4096
-            n_channels = n // ch_dim
-            channel_count = n_channels
-            cell_idx = dest['x'] * 512 + dest['y'] * 64 + dest['z'] * 8 + dest['w']
-            intensities = {}
-            for ch in range(n_channels):
-                name = (
-                    CHANNEL_NAMES[ch]
-                    if (CHANNEL_NAMES is not None and ch < len(CHANNEL_NAMES))
-                    else f'ch{ch}'
-                )
-                intensities[name] = float(vec[ch * ch_dim + cell_idx])
-            previews.append({'dest': dest, 'intensities': intensities})
+            cur_pos4 = _state_to_pos4(state)
+            cur_sig = board_signal_4d(cur_pos4)
+            cur_encoding = encode_4d(cur_pos4)
+            tables = _load_tables()
+            _encoder_cache = {
+                'pos4': cur_pos4,
+                'sig': cur_sig,
+                'encoding': cur_encoding,
+                'tables': tables,
+                'history_len': len(_move_history),
+            }
         except Exception as e:
+            _encoder_cache = {'error': f'{type(e).__name__}: {e}', 'history_len': len(_move_history)}
+
+    if _encoder_cache.get('error'):
+        result = {
+            'ok': False,
+            'reason': f'cache error: {_encoder_cache["error"]}',
+            'channels': [name for (name, _) in (CHANNELS_4D or [])],
+            'previews': [{'dest': {'x': d[0], 'y': d[1], 'z': d[2], 'w': d[3]}, 'intensities': None} for d in dests],
+        }
+    else:
+        pos4   = _encoder_cache['pos4']
+        sig    = _encoder_cache['sig']
+        enc    = _encoder_cache['encoding']
+        tables = _encoder_cache['tables']
+        P_A1   = tables['P_A1']
+        coord_resid = tables['coord_resid']
+        CHANNEL_DIM = 4096
+
+        origin_sq = _sq4(*origin)
+        moving_piece = pos4.get(origin_sq)
+
+        def _piece_value_for_sig(piece_value):
+            """Get the moving piece's signed value at any new square."""
+            if piece_value is None:
+                return 0.0
+            mock_sig = board_signal_4d({0: piece_value})
+            return float(mock_sig[0])
+
+        moving_piece_value = _piece_value_for_sig(moving_piece)
+
+        # Channel-name list aligned with CHANNELS_4D layout in encoder_4d.py.
+        channel_names = [name for (name, _) in CHANNELS_4D]
+        # Linear channels: A1 = channels[0], STD4_X..W = channels[1..4]
+        LINEAR_NAMES = set(channel_names[:5])  # A1, STD4_X/Y/Z/W
+
+        def _scalar(M, i, j):
+            try:
+                v = M[i, j]
+            except Exception:
+                return 0.0
+            try:
+                return float(v)
+            except Exception:
+                try:
+                    return float(np.asarray(v).reshape(())[()])
+                except Exception:
+                    return 0.0
+
+        previews = []
+        for (dx, dy, dz, dw) in dests:
+            dest_sq = _sq4(dx, dy, dz, dw)
+            sig_before_origin = float(sig[origin_sq])
+            sig_before_dest   = float(sig[dest_sq])
+            delta_sig_origin  = -sig_before_origin
+            delta_sig_dest    = moving_piece_value - sig_before_dest
+            sig_after_at_dest = moving_piece_value
+
+            intensities = {}
+            # Channel 0 (A1): linear in sig, matrix multiply.
+            a1_before_at_dest = float(enc[dest_sq])
+            a1_delta_at_dest  = (
+                _scalar(P_A1, dest_sq, origin_sq) * delta_sig_origin
+                + _scalar(P_A1, dest_sq, dest_sq) * delta_sig_dest
+            )
+            intensities[channel_names[0]] = a1_before_at_dest + a1_delta_at_dest
+
+            # Channels 1-4 (STD4_X/Y/Z/W): coord_resid[a][d] * sig[d]
+            # Only sig[dest] matters for the dest-cell value; sig[origin]
+            # changing doesn't reach the dest cell in this element-wise channel.
+            for a in range(4):
+                ch_idx = 1 + a
+                cr = coord_resid[a]
+                try:
+                    cr_at_dest = float(cr[dest_sq])
+                except Exception:
+                    cr_at_dest = 0.0
+                intensities[channel_names[ch_idx]] = cr_at_dest * sig_after_at_dest
+
+            # Nonlinear channels — null in fast path, JS falls back.
+            for name in channel_names[5:]:
+                intensities[name] = None
+
             previews.append({
-                'dest': dest,
-                'intensities': None,
-                'error': f'{type(e).__name__}: {e}',
+                'dest': {'x': dx, 'y': dy, 'z': dz, 'w': dw},
+                'intensities': intensities,
             })
 
-    result = {
-        'ok': True,
-        'reason': None,
-        'channels': CHANNEL_NAMES if CHANNEL_NAMES is not None else (
-            [f'ch{i}' for i in range(channel_count or 11)]
-        ),
-        'previews': previews,
-    }
+        result = {
+            'ok': True,
+            'reason': None,
+            'channels': channel_names,
+            'fast_channels': sorted(list(LINEAR_NAMES)),
+            'previews': previews,
+        }
 
 result
 `
