@@ -49,6 +49,9 @@ test-results/
 playwright-report/
 .playwright/
 
+# Local-only Pyodide-package inspection scratch (not part of the app)
+tmp_inspect/
+
 # Misc
 *.bak
 *.orig
