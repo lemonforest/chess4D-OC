@@ -85,10 +85,30 @@ GameBoard.prototype = {
 			
 			Object.assign(metaData, {promotion: true, newPiece: queen, oldPiece: piece});
 		}
-		
+
+		// M4a: keep Python state in sync with JS state. Fire-and-forget so we
+		// never block the move execution; errors logged but not surfaced.
+		// Disabled when ?legalityEngine=js (default in production until M4b).
+		if (typeof window !== 'undefined' && window.SpectralBridge && window.__LEGALITY_ENGINE__ !== 'js') {
+			try {
+				window.SpectralBridge.applyMove(
+					{x: x0, y: y0, z: z0, w: w0},
+					{x: x1, y: y1, z: z1, w: w1}
+				).then((res) => {
+					if (!res || !res.ok) {
+						console.warn('[m4a] bridge.applyMove rejected', res);
+					}
+				}).catch((err) => {
+					console.warn('[m4a] bridge.applyMove error', err);
+				});
+			} catch (err) {
+				console.warn('[m4a] bridge.applyMove threw synchronously', err);
+			}
+		}
+
         return metaData;
     },
-	
+
 	undo: function(move){
 		this.graphics.hidePossibleMoves(); // TODO: replace with pointer deselection
 		const pieceInOriginalLoc = this.pieces[move.x0][move.y0][move.z0][move.w0];
@@ -112,6 +132,21 @@ GameBoard.prototype = {
 			originalPiece.hasMoved = false;
 		}
 		this.graphics.moveMesh(originalPiece, move.x0, move.y0, move.z0, move.w0);
+
+		// M4a: keep Python state in sync with JS state on undo.
+		if (typeof window !== 'undefined' && window.SpectralBridge && window.__LEGALITY_ENGINE__ !== 'js') {
+			try {
+				window.SpectralBridge.undo().then((res) => {
+					if (!res || !res.ok) {
+						console.warn('[m4a] bridge.undo rejected', res);
+					}
+				}).catch((err) => {
+					console.warn('[m4a] bridge.undo error', err);
+				});
+			} catch (err) {
+				console.warn('[m4a] bridge.undo threw synchronously', err);
+			}
+		}
 	},
 	
 	inCheck: function(team) {

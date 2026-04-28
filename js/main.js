@@ -375,7 +375,32 @@ function executeMove(x0, y0, z0, w0, x1, y1, z1, w1) {
         
         // Check if move is legal (basic validation)
         let possibleMoves = sourcePiece.getPossibleMoves(gameBoard.pieces, x0, y0, z0, w0);
-        let isValidMove = possibleMoves.some(move => 
+
+        // M4a shadow check: if ?legalityEngine=shadow|py, ask Python in
+        // parallel and log any diff. Doesn't block move validation; the
+        // JS engine remains the gate until M4b flips polarity.
+        if (typeof window !== 'undefined' && window.SpectralBridge &&
+                (window.__LEGALITY_ENGINE__ === 'shadow' || window.__LEGALITY_ENGINE__ === 'py')) {
+            window.SpectralBridge.legalMoves({x: x0, y: y0, z: z0, w: w0})
+                .then((res) => {
+                    if (!res || !res.ok) {
+                        console.warn(`[m4a/shadow] py.legalMoves not ok at (${x0},${y0},${z0},${w0}):`, res && res.reason);
+                        return;
+                    }
+                    const jsKeys = new Set(possibleMoves.map(m => `${m.x},${m.y},${m.z},${m.w}`));
+                    const pyKeys = new Set(res.moves.map(m => `${m.x},${m.y},${m.z},${m.w}`));
+                    const onlyJs = [...jsKeys].filter(k => !pyKeys.has(k));
+                    const onlyPy = [...pyKeys].filter(k => !jsKeys.has(k));
+                    if (onlyJs.length === 0 && onlyPy.length === 0) {
+                        console.log(`[m4a/shadow] OK at (${x0},${y0},${z0},${w0}): ${jsKeys.size} moves agree`);
+                    } else {
+                        console.warn(`[m4a/shadow] DIFF at (${x0},${y0},${z0},${w0}): JS-only=${onlyJs.join('|')} Py-only=${onlyPy.join('|')}`);
+                    }
+                })
+                .catch((err) => console.warn('[m4a/shadow] bridge.legalMoves error:', err));
+        }
+
+        let isValidMove = possibleMoves.some(move =>
             move.x === x1 && move.y === y1 && move.z === z1 && move.w === w1
         );
         if (!isValidMove) {
