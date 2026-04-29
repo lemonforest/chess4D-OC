@@ -123,13 +123,26 @@
     if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
   }
 
+  // M11.3.7: track last selected origin so channel-dropdown changes can
+  // re-fire the preview WITHOUT requiring the user to click the piece
+  // again. User reported "channel dropdown does nothing on the screen
+  // when a piece is selected" — almost certainly because they were
+  // changing channels AFTER selection without re-clicking. The overlay
+  // only fired on selection events. Now: any channel change re-fires
+  // the preview against the last known origin.
+  let _lastOrigin = null;
+
   // Fire previewEncoding for the given origin and apply intensities for the
   // currently-selected channel. No-ops if channel=off, no bridge, or the
   // encoder isn't installed.
   let lastRequestId = 0;
   function previewAt(origin) {
+    if (origin) _lastOrigin = origin;
     const channel = getSelectedChannel();
-    if (channel === 'off') return;
+    if (channel === 'off') {
+      console.log('[m5/overlay] channel=off; preview skipped');
+      return;
+    }
     if (typeof window === 'undefined' || !window.SpectralBridge) return;
     const myId = ++lastRequestId;
     window.SpectralBridge.previewEncoding(origin)
@@ -169,7 +182,25 @@
       previewAt(origin);
     },
     getChannel: getSelectedChannel,
+    /** M11.3.7: re-fire preview at the last selected origin if any.
+     *  Used by the channel-dropdown change handler. */
+    refresh() {
+      if (_lastOrigin) previewAt(_lastOrigin);
+    },
   };
+
+  // M11.3.7: wire the channel dropdown's change event so flipping channels
+  // immediately re-tints the currently-visible destinations. Without this,
+  // changing the dropdown after selecting a piece looked like it did
+  // nothing — the overlay only fired on selection events.
+  document.addEventListener('DOMContentLoaded', function () {
+    const sel = document.getElementById(SELECTOR_ID);
+    if (!sel) return;
+    sel.addEventListener('change', function () {
+      if (_lastOrigin) previewAt(_lastOrigin);
+      else console.log('[m5/overlay] channel changed but no piece selected — click a piece to see the new channel');
+    });
+  });
 
   // Status hint follows the bridge's init lifecycle.
   function updateStatusHint() {

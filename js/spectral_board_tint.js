@@ -126,10 +126,36 @@
     return im;
   }
 
+  // M11.3.7 fix: refresh has multiple bail-out paths that fail SILENTLY
+  // (returning early when bridge isn't ready, channel slice missing,
+  // or array flat). User reported "tint doesn't seem to do anything"
+  // — almost certainly because they enabled the checkbox before
+  // __SPECTRAL_INFO__ was published OR because A1 at initial position
+  // is near-uniform per cell. Now: retry once if bridge isn't ready,
+  // and ALWAYS log refresh attempts so the diagnostics make it obvious.
+  let _refreshRetries = 0;
   async function refresh() {
-    if (!enabled || !im) return;
-    if (typeof window === 'undefined' || !window.SpectralBridge) return;
-    if (!window.__SPECTRAL_INFO__) return;
+    if (!enabled || !im) {
+      console.log(`[m11.3.6/tint] refresh skipped: enabled=${enabled} im=${!!im}`);
+      return;
+    }
+    if (typeof window === 'undefined' || !window.SpectralBridge) {
+      console.warn('[m11.3.6/tint] refresh skipped: no SpectralBridge');
+      return;
+    }
+    if (!window.__SPECTRAL_INFO__) {
+      // Bridge not ready yet — schedule a retry instead of bailing silently.
+      // Up to 30 retries × 200ms = 6 seconds total before giving up.
+      if (_refreshRetries < 30) {
+        _refreshRetries++;
+        console.log(`[m11.3.6/tint] bridge not ready; retry ${_refreshRetries}/30 in 200ms`);
+        setTimeout(() => { refresh(); }, 200);
+      } else {
+        console.warn('[m11.3.6/tint] bridge still not ready after 30 retries; giving up');
+      }
+      return;
+    }
+    _refreshRetries = 0;
     try {
       const res = await window.SpectralBridge.getBoardEncoding([channel]);
       if (!res || !res.ok) {
@@ -142,19 +168,41 @@
         return;
       }
       const [pLo, pHi] = _percentileBounds(arr, 0.05, 0.95);
-      const range = pHi - pLo;
-      const flat = !Number.isFinite(range) || range < 1e-12;
+      let mapLo = pLo, mapHi = pHi;
+      let flat = false;
+      // Robust normalization: percentile can collapse on near-uniform
+      // channels (A1 at initial position is highly symmetric). Fall
+      // back to absolute min/max so we still get visible variation.
+      if (!Number.isFinite(mapHi - mapLo) || (mapHi - mapLo) < 1e-12) {
+        let aLo = Infinity, aHi = -Infinity;
+        for (let k = 0; k < arr.length; k++) {
+          if (arr[k] < aLo) aLo = arr[k];
+          if (arr[k] > aHi) aHi = arr[k];
+        }
+        if (Number.isFinite(aHi - aLo) && (aHi - aLo) > 1e-12) {
+          mapLo = aLo; mapHi = aHi;
+          console.log('[m11.3.6/tint] percentile range degenerate; using min/max fallback');
+        } else {
+          flat = true;
+        }
+      }
+      const range = mapHi - mapLo;
       for (let i = 0; i < arr.length; i++) {
-        let t = flat ? 0.5 : (arr[i] - pLo) / range;
+        let t = flat ? 0.5 : (arr[i] - mapLo) / range;
         if (t < 0) t = 0; else if (t > 1) t = 1;
         const c = viridisColor(t);
         im.instanceColor.setXYZ(i, c[0], c[1], c[2]);
       }
       im.instanceColor.needsUpdate = true;
+      // Defensive: also force the InstancedMesh visible flag in case
+      // some other code flipped it.
+      im.visible = enabled;
       if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
       console.log(
         `[m11.3.6/tint] ch=${channel} cells=${arr.length} ` +
-          `clip=[${pLo.toExponential(3)}, ${pHi.toExponential(3)}]`
+          `clip=[${pLo.toExponential(3)}, ${pHi.toExponential(3)}] ` +
+          `mapped=[${mapLo.toExponential(3)}, ${mapHi.toExponential(3)}]` +
+          (flat ? ' (FLAT — channel near-constant; all cells uniform color)' : '')
       );
     } catch (err) {
       console.warn('[m11.3.6/tint] refresh error:', err);
