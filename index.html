@@ -14,11 +14,15 @@
     <!-- Three.js r184 (Apr 2026) — see docs/repo-setup.md for migration notes.
          Loaded as ES modules via import map; legacy r128 examples/js/* paths
          are not in r184. We expose THREE/OrbitControls/OBJLoader as globals
-         so the rest of the script-mode codebase doesn't need to change. -->
+         so the rest of the script-mode codebase doesn't need to change.
+         The .webgpu.min.js bundle is a strict superset that ships both the
+         WebGLRenderer (default) and WebGPURenderer (opt-in via ?gpu=webgpu;
+         M7e). Bundle size cost is modest (~50 KB extra over .module.min.js)
+         for the runtime renderer choice. -->
     <script type="importmap">
     {
       "imports": {
-        "three":         "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.min.js",
+        "three":         "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.min.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
       }
     }
