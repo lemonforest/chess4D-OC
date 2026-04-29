@@ -265,6 +265,55 @@ _state = initial_position()
 _history_len = 0
 _encoder_cache = None
 
+# --- M11.27: chess_spectral_4d.GameState4D mirror, lazily refreshed ---
+# qm_4d_bridge.get_qm_state / get_qm_density / etc. operate on a
+# chess_spectral_4d.GameState4D, not a chess4d.GameState. We don't want
+# to pay the FEN4 round-trip on every QM call, so cache the translated
+# state and invalidate when _history_len advances. _qm_state_cache is
+# (history_len, GameState4D) or None.
+_qm_state_cache = None
+
+def _get_qm_state_obj():
+    """Return a cached chess_spectral_4d.GameState4D mirror of _state.
+
+    Round-trips _state through FEN4 to get a GameState4D the qm_4d
+    bridge can consume. Cached on _history_len so repeated read-only
+    QM calls don't repeatedly serialize+parse. Returns None on import
+    failure (caller should produce {ok: False, error: ...})."""
+    global _qm_state_cache
+    if _qm_state_cache is not None and _qm_state_cache[0] == _history_len:
+        return _qm_state_cache[1]
+    try:
+        from chess_spectral_4d import bridge as cs4d_bridge
+    except Exception:
+        try:
+            # Older 1.5 builds may have shipped this under chess_spectral.
+            from chess_spectral import bridge as cs4d_bridge  # type: ignore
+        except Exception:
+            return None
+    try:
+        fen4 = _state_to_fen4(_state)
+        r = cs4d_bridge.load_state(fen4)
+        # bridge.load_state returns {'ok': True, 'state': GameState4D, ...}
+        if not r or not r.get('ok'):
+            return None
+        gs4 = r.get('state')
+        _qm_state_cache = (_history_len, gs4)
+        return gs4
+    except Exception:
+        return None
+
+def _state_side_to_move():
+    """White-to-move bool. chess4d.GameState exposes this as side_to_move
+    (Color.WHITE / Color.BLACK). Defaults to True (white) if absent."""
+    s2m = getattr(_state, 'side_to_move', None)
+    if s2m is None:
+        return True
+    try:
+        return s2m == Color.WHITE
+    except Exception:
+        return True
+
 def _refresh_encoder_cache():
     """Rebuild pos4 + sig + encoding from _state. Called lazily by
     previewEncoding when its history-length cache key drifts."""
@@ -399,6 +448,7 @@ except (ImportError, AttributeError):
 _state = initial_position()
 _history_len = 0
 _encoder_cache = None
+_qm_state_cache = None
 `);
     return { ok: true, history_len: 0 };
   },
@@ -817,6 +867,80 @@ _do_get_fen4()
 `
       )
       .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.5 §17.1 QM kinematics (M11.27)
+  // ───────────────────────────────────────────────────────────────────
+
+  // Lift the current classical state to the QM kinematics ψ ∈ ℂ^45056.
+  // Args: { sideToMove?: boolean }  (default: read from chess4d state)
+  // Returns: { ok, psi: Float32Array(90112), basisDim: 45056, normSq }
+  //
+  // Wire format per upstream §17.1: psi[2k] = Re(ψ_k), psi[2k+1] = Im(ψ_k).
+  // The 90112-length Float32Array transports as a typed-array buffer (no
+  // structured-clone deep copy when we set the worker postMessage to
+  // include it as a transferable — wired in spectral_bridge.js call()).
+  // basisDim is always 45056 for the 4D encoder; included so consumers
+  // don't have to assume.
+  getQmState(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const sideToMove = (args && typeof args.sideToMove === 'boolean')
+      ? args.sideToMove
+      : null;
+    pyodide.globals.set('_qm_side_arg', sideToMove);
+    return pyodide
+      .runPython(
+        `
+def _do_get_qm_state():
+    try:
+        from chess_spectral.qm_4d_bridge import get_qm_state as _gqs
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    s2m = _qm_side_arg if _qm_side_arg is not None else _state_side_to_move()
+    try:
+        r = _gqs(gs4, side_to_move=bool(s2m))
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_qm_state()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // Per-cell density |ψ_p|² summed across the 11 channels.
+  // Returns: { ok, density: Float32Array(4096) }
+  //
+  // The 4096-length array maps to lattice cells via the standard
+  // sq_idx = x*512 + y*64 + z*8 + w packing (matches encoder_4d).
+  // Sum over all 4096 cells normalizes to 1.0 ± 1e-6 by Born-rule
+  // construction. The M14.1 density overlay rides this directly.
+  getQmDensity() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_get_qm_density():
+    try:
+        from chess_spectral.qm_4d_bridge import get_qm_density as _gqd
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        r = _gqd(gs4)
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_qm_density()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 };
 

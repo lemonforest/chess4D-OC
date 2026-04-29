@@ -217,6 +217,26 @@
     // M11.6-style export-to-clipboard and round-trip into the QM
     // bridge for analysis.
     getFen4State: () => applyChain.then(() => call('getFen4State')),
+
+    // ───────────────────────────────────────────────────────────────
+    // chess-spectral 1.5 §17.1 QM kinematics (M11.27)
+    // ───────────────────────────────────────────────────────────────
+
+    // Lift current classical state to ψ ∈ ℂ^45056. Returns:
+    //   { ok, psi: Float32Array(90112), basisDim: 45056, normSq }
+    // psi[2k] = Re(ψ_k), psi[2k+1] = Im(ψ_k). Goes through applyChain
+    // so post-move QM state is consistent with the move just applied.
+    // Optional opts: { sideToMove?: boolean } overrides the classical
+    // state's side-to-move (default: read from chess4d state).
+    getQmState: (opts) =>
+      applyChain.then(() => call('getQmState', opts || {})),
+
+    // Per-cell density |ψ_p|² summed across the 11 channels. Returns:
+    //   { ok, density: Float32Array(4096) }
+    // Cell index packing: idx = x*512 + y*64 + z*8 + w. Sum normalizes
+    // to 1.0 ± 1e-6 by Born-rule construction. M14.1 density overlay
+    // consumes this directly.
+    getQmDensity: () => applyChain.then(() => call('getQmDensity')),
   };
   window.SpectralBridge = bridge;
 
