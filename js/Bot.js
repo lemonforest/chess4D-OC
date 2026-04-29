@@ -367,8 +367,12 @@ const Bot = {
         // synchronous search blocks the main thread.
         await new Promise(function (r) { setTimeout(r, 0); });
         const strategy = Bot.strategies[stratName];
+        // M11.28a: smart strategy is now async (cooperative yields between
+        // iterative-deepening iterations). Other strategies stay sync, but
+        // `await` works fine on sync values — it just resolves at the next
+        // microtask boundary. Net cost ~1 microtask which is invisible.
         const move = strategy
-            ? strategy.getBestMove(gameBoard, team)
+            ? await strategy.getBestMove(gameBoard, team)
             : Bot.getBestMove(gameBoard, team); // fallback if registry is missing
         if (typeof window !== 'undefined' && window._hideThinking) {
             window._hideThinking();
@@ -440,7 +444,13 @@ const Bot = {
             // BOT_VISUAL_GATE_MS — otherwise the highlight might never
             // visibly appear (e.g. compute = 50 ms, gate = 0, execute fires
             // before browser paints the highlight).
-            const VISUAL_GATE_MS    = window.TIMING.BOT_VISUAL_GATE_MS;
+            // M11.28a — RUNTIME_OVERRIDES.BOT_VISUAL_GATE_MS lets the bot
+            // pacing slider override the default per-session. `??` only
+            // falls through on null/undefined, so 0 / very small overrides
+            // still take effect (slider min is 100ms by UI clamp).
+            const VISUAL_GATE_MS = (window.RUNTIME_OVERRIDES && window.RUNTIME_OVERRIDES.BOT_VISUAL_GATE_MS != null)
+                ? window.RUNTIME_OVERRIDES.BOT_VISUAL_GATE_MS
+                : window.TIMING.BOT_VISUAL_GATE_MS;
             const HIGHLIGHT_MIN_MS  = window.TIMING.BOT_HIGHLIGHT_MIN_MS;
             const nowT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
             const elapsed = nowT - turnStartTime;
@@ -719,8 +729,18 @@ const Bot = {
      * Iterative-deepening driver. Searches depth 1, 2, ... up to
      * maxDepth or until timeBudgetMs elapses. Returns the best move
      * from the deepest completed iteration.
+     *
+     * M11.28a: now async with cooperative yields between depth
+     * iterations so the browser can paint at least once per pass and
+     * the busy-spinner GPU compositor stays responsive. The yield uses
+     * scheduler.postTask({priority: 'user-visible'}) on supported
+     * browsers (Chrome/Edge 94+) and falls back to setTimeout(0) on
+     * Firefox/Safari. Note: this does NOT make the search itself
+     * non-blocking — a single deep _alphaBeta still freezes the main
+     * thread for its duration. The complete fix is M13.4 (chess-spectral
+     * 1.6 engine cutover, search runs in Pyodide worker).
      */
-    getBestMoveSmart: function (gameBoard, team, opts) {
+    getBestMoveSmart: async function (gameBoard, team, opts) {
         opts = opts || {};
         const maxDepth = Number.isFinite(opts.maxDepth) ? opts.maxDepth : 3;
         const timeBudgetMs = Number.isFinite(opts.timeBudgetMs) ? opts.timeBudgetMs : 4000;
@@ -736,6 +756,15 @@ const Bot = {
             bestMove = result.move;
             bestScore = result.score;
             lastDepthCompleted = d;
+            // Yield between depth iterations so the browser gets to
+            // paint and process input. Skipped at maxDepth so we don't
+            // pay an unnecessary microtask boundary on the last loop.
+            if (d < maxDepth) {
+                await Bot._yieldToMain();
+                // After the yield, re-check the deadline — the user might
+                // have eaten budget on a long animation frame.
+                if (((typeof performance !== 'undefined') ? performance.now() : Date.now()) > deadline) break;
+            }
         }
         const elapsed = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - startTime;
         console.log(
@@ -744,6 +773,31 @@ const Bot = {
             ' time=' + elapsed.toFixed(0) + 'ms'
         );
         return bestMove;
+    },
+
+    /**
+     * Yield to the main thread between depth iterations. Uses the
+     * scheduler API where available (Chrome/Edge 94+) so the browser
+     * can prioritize user input over background bot CPU; falls back
+     * to setTimeout(0) on Firefox/Safari which still gives one
+     * animation-frame of breathing room.
+     *
+     * Priority 'user-visible' is the middle tier — bot work should
+     * keep flowing but yield to user input. 'background' would starve
+     * under load; 'user-blocking' would defeat the point.
+     */
+    _yieldToMain: function () {
+        return new Promise(function (resolve) {
+            if (typeof globalThis !== 'undefined'
+                && globalThis.scheduler
+                && typeof globalThis.scheduler.postTask === 'function') {
+                try {
+                    globalThis.scheduler.postTask(resolve, { priority: 'user-visible' });
+                    return;
+                } catch (_) { /* fall through to setTimeout */ }
+            }
+            setTimeout(resolve, 0);
+        });
     },
 };
 

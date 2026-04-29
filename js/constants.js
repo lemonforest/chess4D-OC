@@ -76,4 +76,14 @@
     BOT_HIGHLIGHT_MIN_MS: 250,   // floor on selected-piece highlight visibility
     WIN_CHECK_DEFER_MS:   100,   // delay before checkmate check after move
   });
+
+  // M11.28a — runtime overrides driven by user UI (e.g., bot pacing slider).
+  // Consumers should read `RUNTIME_OVERRIDES.<KEY> ?? TIMING.<KEY>` so the
+  // engineered default is the fallback when no user override is set. This
+  // namespace is intentionally NOT frozen — UI controls mutate it. Keys
+  // mirror TIMING/BOT exactly for grep-ability.
+  window.RUNTIME_OVERRIDES = window.RUNTIME_OVERRIDES || {
+    // Set by the bot-pacing slider in index.html. null = use TIMING default.
+    BOT_VISUAL_GATE_MS: null,
+  };
 })();
