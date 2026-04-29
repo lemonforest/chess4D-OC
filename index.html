@@ -366,9 +366,9 @@
                 </div>
                 <div class="spectral-control spectral-m10 spectral-filament-params" id="heatmap-slice-row" hidden>
                     <div class="filament-slider-row">
-                        <label for="heatmap-slice-value">Slice value</label>
-                        <input type="range" id="heatmap-slice-value" min="0" max="7" step="1" value="4">
-                        <span class="filament-value" id="heatmap-slice-value-display">4</span>
+                        <label for="heatmap-slice-value" title="Slide between integer values to scrub through sub-cell positions — adjacent slabs blend by linear interpolation. M11.3.8.">Slice value</label>
+                        <input type="range" id="heatmap-slice-value" min="0" max="7" step="0.5" value="4">
+                        <span class="filament-value" id="heatmap-slice-value-display">4.0</span>
                     </div>
                 </div>
                 <div class="spectral-control spectral-m10 spectral-filament-params">
@@ -1133,7 +1133,7 @@
         var thresholdDisplay = document.getElementById('heatmap-threshold-display');
         function pushSlice() {
           var axis = sliceAxisSel ? sliceAxisSel.value : 'off';
-          var value = sliceValueSlider ? parseInt(sliceValueSlider.value, 10) : 4;
+          var value = sliceValueSlider ? parseFloat(sliceValueSlider.value) : 4;
           var ax = axis === 'off' ? null : axis;
           if (window.SpectralHeatmap) window.SpectralHeatmap.setSlice(ax, value);
           if (window.SpectralDotplot) window.SpectralDotplot.setSlice(ax, value);
@@ -1178,7 +1178,7 @@
             }
           }
         } catch (_) {}
-        if (sliceValueDisplay && sliceValueSlider) sliceValueDisplay.textContent = sliceValueSlider.value;
+        if (sliceValueDisplay && sliceValueSlider) sliceValueDisplay.textContent = parseFloat(sliceValueSlider.value).toFixed(1);
         if (thresholdDisplay && thresholdSlider) thresholdDisplay.textContent = thresholdSlider.value + '%';
         syncSliceRow();
         // Apply current values on init so URL/localStorage state reaches the module.
@@ -1198,7 +1198,8 @@
         }
         if (sliceValueSlider) {
           sliceValueSlider.addEventListener('input', function () {
-            if (sliceValueDisplay) sliceValueDisplay.textContent = sliceValueSlider.value;
+            // M11.3.8: format with one decimal so 3.5 reads as "3.5" not "3".
+            if (sliceValueDisplay) sliceValueDisplay.textContent = parseFloat(sliceValueSlider.value).toFixed(1);
           });
           sliceValueSlider.addEventListener('change', function () {
             pushSlice();
