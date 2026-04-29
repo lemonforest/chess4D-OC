@@ -337,8 +337,12 @@ const Bot = {
             return Promise.resolve(false);
         }
         
-        // Get the best move
-        const move = Bot.getBestMove(gameBoard, team);
+        // M13.1: when smart mode is on, use the iterative-deepening alpha-
+        // beta search instead of the v0 single-ply heuristic. Otherwise
+        // keep the original behavior — backward-compatible default.
+        const move = Bot.smartMode
+            ? Bot.getBestMoveSmart(gameBoard, team)
+            : Bot.getBestMove(gameBoard, team);
         
         if (!move) {
             console.warn(`Bot: No legal moves found for team ${team} - may be checkmate/stalemate`);
@@ -459,5 +463,236 @@ const Bot = {
             console.error('Bot: Error executing move:', error);
             resolve(false);
         }
-    }
+    },
+
+    // ────────────────────────────────────────────────────────────────────────
+    // M13.1 — SMART-MODE SEARCH (iterative deepening alpha-beta + transposition
+    //          table + move ordering). Gated behind ?bot=smart URL flag.
+    //
+    // The default getBestMove path above does single-ply lookahead with
+    // handcrafted heuristics + 30%-randomized top moves. That produces
+    // playable but shallow moves. M13.1 adds a deeper search that uses
+    // standard 2D-engine techniques (all of which port to 4D unchanged):
+    //
+    //   - Iterative deepening: ply 1, 2, ... up to maxDepth or timeBudget
+    //   - Alpha-beta pruning: cut subtrees that can't improve the bound
+    //   - Move ordering (MVV-LVA): try captures of higher-value pieces
+    //     first so beta cutoffs fire as early as possible
+    //   - Transposition table: skip re-evaluating positions reached by
+    //     transposition (multiple move orders → same position)
+    //   - Material+mobility position eval (same heuristic as v0)
+    //
+    // Branching factor in 4D chess is ~60-100 per side, so with good
+    // move ordering alpha-beta evaluates ~sqrt(N) of the tree → 2-ply
+    // is in the 60-100 effective leaf range, very tractable.
+    //
+    // Future M13.2 (filed): replace material+mobility eval with chess-
+    // spectral channel-energy weighted sum. Async path, follow-up PR.
+    // ────────────────────────────────────────────────────────────────────────
+
+    smartMode: false,
+    _PIECE_VALUES: { pawn: 10, knight: 30, bishop: 30, rook: 50, queen: 90, king: 1000 },
+
+    /**
+     * Material balance from `team`'s perspective. Static eval, single pass
+     * over the 4096-cell board (only ~896 are occupied). No mobility term
+     * yet — that costs full move generation per leaf, too expensive for
+     * deep search at 4D branching factor. M13.2 will replace this with
+     * a chess-spectral channel-energy weighted sum (much richer signal,
+     * single Pyodide call instead of per-piece scan).
+     */
+    evaluatePosition: function (gameBoard, team) {
+        const v = Bot._PIECE_VALUES;
+        let score = 0;
+        const n = gameBoard.n;
+        const board = gameBoard.pieces;
+        for (let x = 0; x < n; x++) {
+            for (let y = 0; y < n; y++) {
+                for (let z = 0; z < n; z++) {
+                    for (let w = 0; w < n; w++) {
+                        const p = board[x][y][z][w];
+                        if (!p || !p.type) continue;
+                        const pieceVal = v[p.type] || 0;
+                        score += (p.team === team) ? pieceVal : -pieceVal;
+                    }
+                }
+            }
+        }
+        return score;
+    },
+
+    /**
+     * Compact position hash for transposition-table key. String-based for
+     * simplicity (avoid maintaining a Zobrist table over 16 piece-types ×
+     * 4096 squares = 65k random ints). For 4D chess with ~896 pieces, the
+     * hash string is <30k chars; Map lookup is O(1) amortized via internal
+     * string-hashing. Faster than re-evaluating shallow subtrees.
+     */
+    positionHash: function (gameBoard, team) {
+        const n = gameBoard.n;
+        const board = gameBoard.pieces;
+        const parts = [String(team)];
+        for (let x = 0; x < n; x++) {
+            for (let y = 0; y < n; y++) {
+                for (let z = 0; z < n; z++) {
+                    for (let w = 0; w < n; w++) {
+                        const p = board[x][y][z][w];
+                        if (!p || !p.type) continue;
+                        parts.push(p.type[0] + p.team + ':' + x + ',' + y + ',' + z + ',' + w);
+                    }
+                }
+            }
+        }
+        return parts.join(';');
+    },
+
+    /**
+     * Generate all legal moves for `team`, ordered by capture value (MVV-LVA
+     * approximation: higher-value captures first, then non-captures). Move
+     * ordering is critical for alpha-beta efficiency — bad ordering loses
+     * most of the pruning benefit.
+     */
+    generateOrderedMoves: function (gameBoard, team) {
+        const v = Bot._PIECE_VALUES;
+        const n = gameBoard.n;
+        const board = gameBoard.pieces;
+        const moves = [];
+        for (let x = 0; x < n; x++) {
+            for (let y = 0; y < n; y++) {
+                for (let z = 0; z < n; z++) {
+                    for (let w = 0; w < n; w++) {
+                        const p = board[x][y][z][w];
+                        if (!p || !p.type || p.team !== team) continue;
+                        let candidates = null;
+                        try {
+                            candidates = p.getPossibleMoves(board, x, y, z, w);
+                        } catch (_) { continue; }
+                        if (!candidates || !candidates.length) continue;
+                        for (const m of candidates) {
+                            const target = board[m.x][m.y][m.z][m.w];
+                            const captureVal = (target && target.type && target.team !== team)
+                                ? (v[target.type] || 0) : 0;
+                            moves.push({
+                                x0: x, y0: y, z0: z, w0: w,
+                                x1: m.x, y1: m.y, z1: m.z, w1: m.w,
+                                captureVal: captureVal,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // MVV-LVA: high-capture moves first → maximize beta cutoffs.
+        moves.sort((a, b) => b.captureVal - a.captureVal);
+        return moves;
+    },
+
+    /**
+     * Apply / undo a move in-place via the gameBoard.pieces array (no
+     * animations, no spectral refresh — pure search-tree mutation).
+     * Returns the captured-piece reference for restoration.
+     */
+    _applyTemp: function (gameBoard, move) {
+        const captured = gameBoard.pieces[move.x1][move.y1][move.z1][move.w1];
+        gameBoard.pieces[move.x1][move.y1][move.z1][move.w1] =
+            gameBoard.pieces[move.x0][move.y0][move.z0][move.w0];
+        gameBoard.pieces[move.x0][move.y0][move.z0][move.w0] = Bot.createEmptyPiece();
+        return captured;
+    },
+    _undoTemp: function (gameBoard, move, captured) {
+        gameBoard.pieces[move.x0][move.y0][move.z0][move.w0] =
+            gameBoard.pieces[move.x1][move.y1][move.z1][move.w1];
+        gameBoard.pieces[move.x1][move.y1][move.z1][move.w1] = captured;
+    },
+
+    /**
+     * Alpha-beta search. Returns { score, move } where score is from
+     * `searchTeam`'s perspective (always maximizing). Calls itself
+     * recursively, swapping team and negating the recursive score
+     * (negamax form). Bails (returns null) if the timeBudget expires —
+     * caller falls back to the previous iterative-deepening result.
+     */
+    _alphaBeta: function (gameBoard, team, searchTeam, depth, alpha, beta, tt, deadline) {
+        if (typeof performance !== 'undefined' && performance.now() > deadline) return null;
+        if (depth === 0) {
+            return { score: Bot.evaluatePosition(gameBoard, searchTeam), move: null };
+        }
+        const ttKey = depth + '|' + Bot.positionHash(gameBoard, team);
+        const cached = tt.get(ttKey);
+        if (cached) return cached;
+        const moves = Bot.generateOrderedMoves(gameBoard, team);
+        if (moves.length === 0) {
+            // Checkmate or stalemate. Use the existing inCheck check.
+            const inCheck = gameBoard.inCheck && gameBoard.inCheck(team);
+            const score = inCheck
+                ? (team === searchTeam ? -100000 : 100000)
+                : 0;
+            return { score: score, move: null };
+        }
+        let bestScore = -Infinity;
+        let bestMove = null;
+        const maximizing = (team === searchTeam);
+        for (const m of moves) {
+            const captured = Bot._applyTemp(gameBoard, m);
+            const sub = Bot._alphaBeta(gameBoard, 1 - team, searchTeam, depth - 1, -beta, -alpha, tt, deadline);
+            Bot._undoTemp(gameBoard, m, captured);
+            if (sub === null) return null; // timeout
+            // Negamax: child returns from team's perspective; flip sign for opponent's eval.
+            const subScore = maximizing ? sub.score : -sub.score;
+            if (subScore > bestScore) {
+                bestScore = subScore;
+                bestMove = m;
+            }
+            if (bestScore > alpha) alpha = bestScore;
+            if (alpha >= beta) break; // beta cutoff
+        }
+        const result = { score: bestScore, move: bestMove };
+        tt.set(ttKey, result);
+        return result;
+    },
+
+    /**
+     * Iterative-deepening driver. Searches depth 1, 2, ... up to
+     * maxDepth or until timeBudgetMs elapses. Returns the best move
+     * from the deepest completed iteration.
+     */
+    getBestMoveSmart: function (gameBoard, team, opts) {
+        opts = opts || {};
+        const maxDepth = Number.isFinite(opts.maxDepth) ? opts.maxDepth : 3;
+        const timeBudgetMs = Number.isFinite(opts.timeBudgetMs) ? opts.timeBudgetMs : 4000;
+        const startTime = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        const deadline = startTime + timeBudgetMs;
+        const tt = new Map();
+        let bestMove = null;
+        let bestScore = -Infinity;
+        let lastDepthCompleted = 0;
+        for (let d = 1; d <= maxDepth; d++) {
+            const result = Bot._alphaBeta(gameBoard, team, team, d, -Infinity, Infinity, tt, deadline);
+            if (result === null) break; // timed out
+            bestMove = result.move;
+            bestScore = result.score;
+            lastDepthCompleted = d;
+        }
+        const elapsed = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - startTime;
+        console.log(
+            '[m13.1/bot] smart search: depth=' + lastDepthCompleted + '/' + maxDepth +
+            ' score=' + bestScore + ' tt-entries=' + tt.size +
+            ' time=' + elapsed.toFixed(0) + 'ms'
+        );
+        return bestMove;
+    },
 };
+
+// M13.1 — URL flag opt-in. ?bot=smart enables iterative-deepening alpha-beta.
+// Fully backward compatible — default behavior is unchanged (single-ply
+// heuristic + top-30% randomization). Once shipped + tested, M13.2 can
+// replace the eval function with chess-spectral channel-energy weights.
+try {
+    if (typeof window !== 'undefined') {
+        const flag = new URLSearchParams(location.search).get('bot');
+        if (flag === 'smart') {
+            Bot.smartMode = true;
+            console.log('[m13.1/bot] smart mode enabled (?bot=smart)');
+        }
+    }
+} catch (_) { /* not in a browser; leave smartMode = false */ }
