@@ -1028,6 +1028,12 @@ function initializeGame() {
                         try { window.SpectralDotplot.init(scene, gameBoard); }
                         catch (err) { console.warn('[m11.9/dotplot] init error:', err); }
                     }
+                    // M12 — phase-operator commutator viz. Uses the JS phase-ops
+                    // port (M12.0) so all computation is in-browser; no bridge calls.
+                    if (typeof window !== 'undefined' && window.SpectralCommutator) {
+                        try { window.SpectralCommutator.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m12/commutator] init error:', err); }
+                    }
                     
                     setTimeout(() => {
                         updateLoadingText('Ready!');
@@ -2134,6 +2140,14 @@ async function selectPiece(mesh) {
     let possibleMoves = await _legalMovesFor(piece, boardCoords);
 
     gameState.possibleMoves = possibleMoves;
+
+    // M12: refresh the phase-operator commutator viz at this origin.
+    // Cheap (~5ms in JS); no-op when commutator viz is disabled.
+    if (typeof window !== 'undefined' && window.SpectralCommutator &&
+        typeof window.SpectralCommutator.refreshFor === 'function') {
+        try { window.SpectralCommutator.refreshFor(boardCoords); }
+        catch (err) { console.warn('[m12/commutator] refreshFor error:', err); }
+    }
     
     // Check for checkmate/stalemate after filtering moves
     // This is especially important when a player has no legal moves and is in check

@@ -72,6 +72,7 @@
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
         'js/phase_ops_4d.js',
+        'js/spectral_commutator.js',
         'js/topology4d.js',
         'js/spectral_filaments.js',
       ];
@@ -324,6 +325,35 @@
                         <input type="checkbox" id="board-dotplot">
                         Dot plot (sphere per cell)
                     </label>
+                </div>
+                <!-- M12: phase-operator commutator [P_A, P_B] visualization.
+                     Shows cells where the order of piece composition matters
+                     — the discrete "curvature 2-form" for the chosen piece
+                     pair. Computed in-browser via the M12.0 JS phase-ops
+                     port (no bridge round-trip per origin). -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Visualize the commutator [P_A, P_B] = (A∘B) Δ (B∘A) of the two piece operators at the selected piece's origin. Cells where the order of piece-move composition matters — the discrete 'curvature' of the lattice under combined motion. Click a piece to set the origin.">
+                        <input type="checkbox" id="board-commutator">
+                        Commutator [P_A, P_B] at selected piece
+                    </label>
+                </div>
+                <div class="spectral-control spectral-m10 spectral-filament-params" id="commutator-pair-row" hidden>
+                    <label for="commutator-piece-a" style="font-size: 12px;">A:</label>
+                    <select id="commutator-piece-a" aria-label="Commutator piece A" style="flex:1;font-size:12px;">
+                        <option value="rook" selected>Rook</option>
+                        <option value="bishop">Bishop</option>
+                        <option value="queen">Queen</option>
+                        <option value="knight">Knight</option>
+                        <option value="king">King</option>
+                    </select>
+                    <label for="commutator-piece-b" style="font-size: 12px; margin-left: 6px;">B:</label>
+                    <select id="commutator-piece-b" aria-label="Commutator piece B" style="flex:1;font-size:12px;">
+                        <option value="rook">Rook</option>
+                        <option value="bishop" selected>Bishop</option>
+                        <option value="queen">Queen</option>
+                        <option value="knight">Knight</option>
+                        <option value="king">King</option>
+                    </select>
                 </div>
                 <!-- M11.1: heatmap statistics options. log1p compresses
                      heavy-tailed channels so every cell contributes; signed
@@ -1737,6 +1767,62 @@
               ' (' + Object.keys(pieces).length + ' pieces, ' +
               moves.length + ' moves)'
           );
+        });
+      });
+    </script>
+
+    <!-- M12: commutator viz — checkbox + piece-pair dropdowns. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('board-commutator');
+        var pairRow = document.getElementById('commutator-pair-row');
+        var selA = document.getElementById('commutator-piece-a');
+        var selB = document.getElementById('commutator-piece-b');
+        if (!box || !selA || !selB) return;
+        var BK = 'chess4d-oc.commutator';
+        var AK = 'chess4d-oc.commutator.pieceA';
+        var BBK = 'chess4d-oc.commutator.pieceB';
+        var initialEnabled = null;
+        try {
+          var u = new URLSearchParams(location.search).get('commutator');
+          if (u === '1' || u === 'on') initialEnabled = true;
+          if (initialEnabled === null) {
+            var v = localStorage.getItem(BK);
+            if (v === '1') initialEnabled = true; else if (v === '0') initialEnabled = false;
+          }
+          var ua = new URLSearchParams(location.search).get('commutatorA');
+          var ub = new URLSearchParams(location.search).get('commutatorB');
+          if (ua) selA.value = ua;
+          else { var sa = localStorage.getItem(AK); if (sa) selA.value = sa; }
+          if (ub) selB.value = ub;
+          else { var sb = localStorage.getItem(BBK); if (sb) selB.value = sb; }
+        } catch (_) {}
+        if (initialEnabled !== null) box.checked = initialEnabled;
+        function syncPairRow() {
+          if (!pairRow) return;
+          if (box.checked) pairRow.removeAttribute('hidden');
+          else pairRow.setAttribute('hidden', '');
+        }
+        function applyEnabled() {
+          if (window.SpectralCommutator) window.SpectralCommutator.setEnabled(box.checked);
+          syncPairRow();
+        }
+        function applyPair() {
+          if (window.SpectralCommutator) window.SpectralCommutator.setPiecePair(selA.value, selB.value);
+        }
+        applyPair();
+        applyEnabled();
+        box.addEventListener('change', function () {
+          applyEnabled();
+          try { localStorage.setItem(BK, box.checked ? '1' : '0'); } catch (_) {}
+        });
+        selA.addEventListener('change', function () {
+          applyPair();
+          try { localStorage.setItem(AK, selA.value); } catch (_) {}
+        });
+        selB.addEventListener('change', function () {
+          applyPair();
+          try { localStorage.setItem(BBK, selB.value); } catch (_) {}
         });
       });
     </script>
