@@ -78,6 +78,11 @@ python -m http.server 8000
 
 **Do not** open `index.html` via `file://` — Pyodide's micropip can't fetch from PyPI under a `file://` origin (CORS).
 
+### Known non-issues (don't waste a PR on these)
+
+- **"The boards are off-center / clipped at the edge of the canvas."**
+  Almost always caused by a docked Chrome / Edge DevTools panel. DevTools docked-bottom or docked-right reclaims space from the viewport, but the canvas + camera aspect were sized before docking and don't auto-resize. Undock DevTools (or move it to a separate window) and the render recenters. This is a browser ergonomics artifact, not a chess4D-OC bug — there is no fog or far-plane clipping at normal zoom levels (M11 fog is 6000-14000, camera far 16000, full lattice spans <4000 world units in any axis).
+
 ## Testing
 
 After M2: `npx playwright test` runs smoke tests against a configured preview URL.
