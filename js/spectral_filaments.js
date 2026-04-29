@@ -537,6 +537,15 @@
         }
       } catch (_) { /* no window — leave defaults */ }
     },
+    /**
+     * M11.3.5: scale the filament-mesh vertical axis so streamlines stay
+     * aligned with the cloud + boards under the "Stack height" slider.
+     */
+    setStackScale(s) {
+      if (!Number.isFinite(s) || s <= 0) return;
+      if (lineMesh) lineMesh.scale.y = s;
+      if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+    },
     setEnabled(en) {
       if (enabled === en) return;
       enabled = en;

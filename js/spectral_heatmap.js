@@ -514,6 +514,18 @@
       colorMode = name;
       if (enabled) refresh();
     },
+    /**
+     * M11.3.5: scale the cloud's vertical (Y) axis to match a stack-
+     * compression value applied to the rest of the scene. Called by the
+     * 4D Navigation "Stack height" slider so cloud cells stay aligned
+     * with the (compressed/expanded) chess boards.
+     */
+    setStackScale(s) {
+      if (!Number.isFinite(s) || s <= 0) return;
+      if (im) im.scale.y = s;
+      if (imMax) imMax.scale.y = s;
+      if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+    },
     setShowLocalMaxima(en) {
       if (showMaxima === en) return;
       showMaxima = en;
