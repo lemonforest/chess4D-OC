@@ -35,6 +35,7 @@
     <!-- Pyodide bridge: spawns the worker, micropip-installs chess-spectral
          and chess4d, sets window.__SMOKE_READY__ when done. No Three.js
          dependency, so it can boot in parallel with the module loader. -->
+    <script src="js/constants.js"></script>
     <script src="js/spectral_bridge.js"></script>
 
     <!-- Module loader: imports Three.js + addons, exposes them as globals,

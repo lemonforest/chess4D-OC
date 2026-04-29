@@ -15,75 +15,63 @@ const Bot = {
      * @returns {number} - Move score (higher is better)
      */
     evaluateMove: function(gameBoard, x0, y0, z0, w0, x1, y1, z1, w1, team) {
+        // M11.24: piece values + score weights now sourced from window.BOT
+        // (js/constants.js). Unchanged numerics; just one place to tune.
+        const pieceValues = window.BOT.PIECE_VALUES;
+        const SCORES = window.BOT.SCORES;
         if (!gameBoard || !gameBoard.pieces) {
-            return -1000;
+            return SCORES.NO_BOARD_PENALTY;
         }
-        
+
         let score = 0;
-        
+
         // Check if this is a capture
         const targetPiece = gameBoard.pieces[x1][y1][z1][w1];
         if (targetPiece && targetPiece.type && targetPiece.team !== team) {
             // Capture move - prioritize higher value pieces
-            const pieceValues = {
-                'pawn': 10,
-                'knight': 30,
-                'bishop': 30,
-                'rook': 50,
-                'queen': 90,
-                'king': 1000  // Checkmate
-            };
-            score += pieceValues[targetPiece.type] || 10;
-            
+            score += pieceValues[targetPiece.type] || pieceValues.pawn;
+
             // Bonus for capturing with a lower value piece
             const sourcePiece = gameBoard.pieces[x0][y0][z0][w0];
             if (sourcePiece && sourcePiece.type) {
-                const sourceValue = pieceValues[sourcePiece.type] || 10;
-                const targetValue = pieceValues[targetPiece.type] || 10;
+                const sourceValue = pieceValues[sourcePiece.type] || pieceValues.pawn;
+                const targetValue = pieceValues[targetPiece.type] || pieceValues.pawn;
                 if (sourceValue < targetValue) {
-                    score += 50; // Great trade!
+                    score += SCORES.GREAT_TRADE_BONUS;
                 }
             }
         }
-        
+
         // Check if moving piece would be captured after move
         // Simulate the move to check safety
         const tempPiece = gameBoard.pieces[x1][y1][z1][w1];
         gameBoard.pieces[x1][y1][z1][w1] = gameBoard.pieces[x0][y0][z0][w0];
         gameBoard.pieces[x0][y0][z0][w0] = Bot.createEmptyPiece();
-        
+
         // Check if piece is under attack after move
         const isUnderAttack = Bot.isPositionUnderAttack(gameBoard, x1, y1, z1, w1, team);
-        
+
         // Restore board
         gameBoard.pieces[x0][y0][z0][w0] = gameBoard.pieces[x1][y1][z1][w1];
         gameBoard.pieces[x1][y1][z1][w1] = tempPiece;
-        
+
         if (isUnderAttack) {
             // Moving into danger - penalty based on piece value
             const sourcePiece = gameBoard.pieces[x0][y0][z0][w0];
             if (sourcePiece && sourcePiece.type) {
-                const pieceValues = {
-                    'pawn': 10,
-                    'knight': 30,
-                    'bishop': 30,
-                    'rook': 50,
-                    'queen': 90,
-                    'king': 1000
-                };
-                score -= pieceValues[sourcePiece.type] || 10;
+                score -= pieceValues[sourcePiece.type] || pieceValues.pawn;
             } else {
-                score -= 20; // Default penalty
+                score -= SCORES.DANGER_PENALTY;
             }
         } else {
             // Safe move - small bonus
-            score += 5;
+            score += SCORES.SAFE_MOVE_BONUS;
         }
-        
+
         // Check if current position is under attack (escape danger)
         const currentUnderAttack = Bot.isPositionUnderAttack(gameBoard, x0, y0, z0, w0, team);
         if (currentUnderAttack) {
-            score += 30; // Bonus for escaping danger
+            score += SCORES.ESCAPE_DANGER_BONUS;
         }
         
         // Prefer moving pieces that are in better positions (center control)
@@ -237,7 +225,7 @@ const Bot = {
                                                 y1: move.y,
                                                 z1: move.z,
                                                 w1: move.w,
-                                                score: 10000, // Very high score for escaping check
+                                                score: window.BOT.SCORES.ESCAPE_CHECK,
                                                 isCapture: move.possibleCapture || false
                                             });
                                         } else {
@@ -283,7 +271,7 @@ const Bot = {
         movesToUse.sort((a, b) => b.score - a.score);
         
         // Pick from top moves (top 30% to add some randomness while still being smart)
-        const topMovesCount = Math.max(1, Math.floor(movesToUse.length * 0.3));
+        const topMovesCount = Math.max(1, Math.floor(movesToUse.length * window.BOT.SEARCH.TOP_FRACTION));
         const topMoves = movesToUse.slice(0, topMovesCount);
         
         // Randomly pick from top moves
@@ -446,13 +434,14 @@ const Bot = {
             // the highlight. Otherwise wait the remainder so fast
             // strategies (v0/random) still pause long enough for the
             // user to register which piece was selected.
-            const VISUAL_GATE_MS = 1200; // total minimum bot-turn duration
-            // Always show the highlight for at least HIGHLIGHT_MIN_MS
-            // even if compute was instant + total elapsed already
-            // exceeds VISUAL_GATE_MS — otherwise the highlight might
-            // never visibly appear (e.g. compute = 50 ms, gate = 0,
-            // execute fires before browser paints the highlight).
-            const HIGHLIGHT_MIN_MS = 250;
+            // M11.24 — sourced from window.TIMING (js/constants.js).
+            // Always show the highlight for at least BOT_HIGHLIGHT_MIN_MS
+            // even if compute was instant + total elapsed already exceeds
+            // BOT_VISUAL_GATE_MS — otherwise the highlight might never
+            // visibly appear (e.g. compute = 50 ms, gate = 0, execute fires
+            // before browser paints the highlight).
+            const VISUAL_GATE_MS    = window.TIMING.BOT_VISUAL_GATE_MS;
+            const HIGHLIGHT_MIN_MS  = window.TIMING.BOT_HIGHLIGHT_MIN_MS;
             const nowT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
             const elapsed = nowT - turnStartTime;
             const wait = Math.max(HIGHLIGHT_MIN_MS, VISUAL_GATE_MS - elapsed);
@@ -563,7 +552,10 @@ const Bot = {
     // ────────────────────────────────────────────────────────────────────────
 
     smartMode: false,
-    _PIECE_VALUES: { pawn: 10, knight: 30, bishop: 30, rook: 50, queen: 90, king: 1000 },
+    // M11.24 — kept as Bot._PIECE_VALUES for backward-compat with the
+    // four call sites (evaluatePosition, evaluatePositionSpectral,
+    // getBestMoveWeighted, etc.). Sourced from window.BOT.PIECE_VALUES.
+    _PIECE_VALUES: window.BOT.PIECE_VALUES,
 
     /**
      * Material balance from `team`'s perspective. Static eval, single pass
@@ -697,7 +689,7 @@ const Bot = {
             // Checkmate or stalemate. Use the existing inCheck check.
             const inCheck = gameBoard.inCheck && gameBoard.inCheck(team);
             const score = inCheck
-                ? (team === searchTeam ? -100000 : 100000)
+                ? (team === searchTeam ? -window.BOT.SCORES.CHECKMATE : window.BOT.SCORES.CHECKMATE)
                 : 0;
             return { score: score, move: null };
         }
@@ -812,7 +804,7 @@ Bot._weightedHeuristicMove = function (gameBoard, team, weights) {
                             escapeMoves.push({
                                 x0: x, y0: y, z0: z, w0: w,
                                 x1: m.x, y1: m.y, z1: m.z, w1: m.w,
-                                score: 10000,
+                                score: window.BOT.SCORES.ESCAPE_CHECK,
                             });
                             continue;
                         }
@@ -849,7 +841,7 @@ Bot._weightedHeuristicMove = function (gameBoard, team, weights) {
     if (!pool.length) return null;
     pool.sort((a, b) => b.score - a.score);
     // Pick from top 30% to keep games varied even with extreme weights.
-    const topN = Math.max(1, Math.floor(pool.length * 0.3));
+    const topN = Math.max(1, Math.floor(pool.length * window.BOT.SEARCH.TOP_FRACTION));
     return pool[Math.floor(Math.random() * topN)];
 };
 
