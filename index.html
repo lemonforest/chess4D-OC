@@ -70,6 +70,7 @@
         'js/spectral_heatmap.js',
         'js/spectral_board_tint.js',
         'js/spectral_isosurfaces.js',
+        'js/spectral_dotplot.js',
         'js/topology4d.js',
         'js/spectral_filaments.js',
       ];
@@ -311,6 +312,16 @@
                     <label title="Nested marching-cubes shells at 50/75/90th-percentile thresholds, computed per w-slice (8 slabs × 3 shells = 24 meshes). Smooth iso-shape view of the field. Pair with 'Hide chess boards' for unobstructed view.">
                         <input type="checkbox" id="board-isosurfaces">
                         Smooth isosurface shells
+                    </label>
+                </div>
+                <!-- M11.9: dot-plot display mode. Sphere-per-cell instead of
+                     overlapping cloud boxes — every cell shows up as a
+                     discrete marker. Composes with cloud (cloud as soft
+                     volume, dots as discrete markers on top) or replaces it. -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Render each cell as a discrete sphere (color = channel intensity). Alternative to the volumetric cloud — every cell visible, no inter-cell blending.">
+                        <input type="checkbox" id="board-dotplot">
+                        Dot plot (sphere per cell)
                     </label>
                 </div>
                 <!-- M11.1: heatmap statistics options. log1p compresses
@@ -896,6 +907,10 @@
           if (!window.SpectralIsosurfaces || typeof window.SpectralIsosurfaces.setChannel !== 'function') return;
           if (channel && channel !== 'off') window.SpectralIsosurfaces.setChannel(channel);
         }
+        function pushChannelToDotplot(channel) {
+          if (!window.SpectralDotplot || typeof window.SpectralDotplot.setChannel !== 'function') return;
+          if (channel && channel !== 'off') window.SpectralDotplot.setChannel(channel);
+        }
         if (sigSelect) {
           try {
             var hf = new URLSearchParams(location.search).get('heatmap');
@@ -910,11 +925,13 @@
             pushChannelToFilaments(v);
             pushChannelToTint(v);
             pushChannelToIso(v);
+            pushChannelToDotplot(v);
           });
           // Initial sync — covers the ?heatmap= URL param case.
           pushChannelToFilaments(sigSelect.value);
           pushChannelToTint(sigSelect.value);
           pushChannelToIso(sigSelect.value);
+          pushChannelToDotplot(sigSelect.value);
         }
         var filCheck = document.getElementById('board-filaments');
         var filParams = document.getElementById('filament-params');
@@ -1070,12 +1087,17 @@
         }
         bind('heatmap-log1p',  'log1p',  'heatmapTransform', 'log1p', function (on) {
           if (window.SpectralHeatmap) window.SpectralHeatmap.setTransform(on ? 'log1p' : 'linear');
+          // M11.9: dotplot mirrors heatmap stats — same transform.
+          if (window.SpectralDotplot) window.SpectralDotplot.setTransform(on ? 'log1p' : 'linear');
         });
         bind('heatmap-signed', 'signed', 'heatmapMode',      'signed', function (on) {
           if (window.SpectralHeatmap) window.SpectralHeatmap.setColorMode(on ? 'signed' : 'unipolar');
+          if (window.SpectralDotplot) window.SpectralDotplot.setColorMode(on ? 'signed' : 'unipolar');
         });
         bind('heatmap-maxima', 'maxima', 'heatmapMaxima',    '1', function (on) {
           if (window.SpectralHeatmap) window.SpectralHeatmap.setShowLocalMaxima(on);
+          // Note: dotplot doesn't have a separate maxima overlay — the
+          // discrete sphere markers already make the peaks visible.
         });
 
         // M11.3: slice axis dropdown + slice value slider + threshold slider.
@@ -1087,10 +1109,11 @@
         var thresholdSlider = document.getElementById('heatmap-threshold');
         var thresholdDisplay = document.getElementById('heatmap-threshold-display');
         function pushSlice() {
-          if (!window.SpectralHeatmap) return;
           var axis = sliceAxisSel ? sliceAxisSel.value : 'off';
           var value = sliceValueSlider ? parseInt(sliceValueSlider.value, 10) : 4;
-          window.SpectralHeatmap.setSlice(axis === 'off' ? null : axis, value);
+          var ax = axis === 'off' ? null : axis;
+          if (window.SpectralHeatmap) window.SpectralHeatmap.setSlice(ax, value);
+          if (window.SpectralDotplot) window.SpectralDotplot.setSlice(ax, value);
         }
         function syncSliceRow() {
           if (!sliceRow || !sliceAxisSel) return;
@@ -1098,9 +1121,10 @@
           else sliceRow.removeAttribute('hidden');
         }
         function pushThreshold() {
-          if (!window.SpectralHeatmap || !thresholdSlider) return;
+          if (!thresholdSlider) return;
           var pct = parseInt(thresholdSlider.value, 10);
-          window.SpectralHeatmap.setIntensityThreshold(pct / 100);
+          if (window.SpectralHeatmap) window.SpectralHeatmap.setIntensityThreshold(pct / 100);
+          if (window.SpectralDotplot) window.SpectralDotplot.setIntensityThreshold(pct / 100);
         }
         // URL flags + localStorage for slice/threshold.
         try {
@@ -1412,6 +1436,33 @@
       });
     </script>
 
+    <!-- M11.9: dot-plot checkbox. URL flag ?dotplot=1 + localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('board-dotplot');
+        if (!box) return;
+        var KEY = 'chess4d-oc.dotplot';
+        var initial = null;
+        try {
+          var u = new URLSearchParams(location.search).get('dotplot');
+          if (u === '1' || u === 'on') initial = true;
+          if (initial === null) {
+            var v = localStorage.getItem(KEY);
+            if (v === '1') initial = true; else if (v === '0') initial = false;
+          }
+        } catch (_) {}
+        if (initial !== null) box.checked = initial;
+        function apply() {
+          if (window.SpectralDotplot) window.SpectralDotplot.setEnabled(box.checked);
+        }
+        apply();
+        box.addEventListener('change', function () {
+          apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
     <!-- M11.3.1: smooth-isosurface checkbox. URL flag ?isosurfaces=1 + localStorage. -->
     <script>
       window.addEventListener('chess4d-app-ready', function () {
@@ -1630,6 +1681,9 @@
           }
           if (window.SpectralIsosurfaces && typeof window.SpectralIsosurfaces.setStackScale === 'function') {
             window.SpectralIsosurfaces.setStackScale(s);
+          }
+          if (window.SpectralDotplot && typeof window.SpectralDotplot.setStackScale === 'function') {
+            window.SpectralDotplot.setStackScale(s);
           }
           window.__GAME_DIRTY__ = true;
         }

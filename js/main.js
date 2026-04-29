@@ -1023,6 +1023,11 @@ function initializeGame() {
                         try { window.SpectralIsosurfaces.init(scene, gameBoard); }
                         catch (err) { console.warn('[m11.3.1/iso] init error:', err); }
                     }
+                    // M11.9 — dot-plot mode (sphere-per-cell alternative to cloud).
+                    if (typeof window !== 'undefined' && window.SpectralDotplot) {
+                        try { window.SpectralDotplot.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m11.9/dotplot] init error:', err); }
+                    }
                     
                     setTimeout(() => {
                         updateLoadingText('Ready!');
