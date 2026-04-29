@@ -1805,3 +1805,27 @@ body {
     color: var(--text-tertiary);
     margin-top: var(--spacing-sm);
 }
+
+/* M10 — additional controls (board signature dropdown + filament checkbox).
+   Reuses the .spectral-control flex row but adds a slim divider + tighter
+   margins so the second/third controls don't read as a separate card. */
+.spectral-card .spectral-m10 {
+    margin-top: var(--spacing-sm);
+    padding-top: var(--spacing-sm);
+    border-top: 1px dashed var(--bg-tertiary);
+}
+.spectral-card .spectral-m10 + .spectral-m10 {
+    margin-top: var(--spacing-sm);
+    padding-top: 0;
+    border-top: none;
+}
+.spectral-card .spectral-m10 input[type="checkbox"] {
+    accent-color: var(--accent-primary);
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.spectral-card .spectral-m10 label {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+}

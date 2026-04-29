@@ -73,6 +73,9 @@ export default [
         Animation: 'writable',
         initTutorial: 'writable',
         checkWinCondition: 'writable',
+        SpectralHeatmap: 'writable',
+        SpectralFilaments: 'writable',
+        scene: 'writable',
       },
     },
     rules: {

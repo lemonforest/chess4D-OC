@@ -977,6 +977,19 @@ function initializeGame() {
                     
                     // Setup navigation controls (after camera is positioned)
                     setupNavigationControls();
+
+                    // M10: hook the spectral heat-map and filament overlays
+                    // into the now-ready scene + gameBoard. They self-init
+                    // from URL flags (?heatmap=, ?filaments=); UI controls
+                    // can flip them at runtime.
+                    if (typeof window !== 'undefined' && window.SpectralHeatmap) {
+                        try { window.SpectralHeatmap.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m10/heatmap] init error:', err); }
+                    }
+                    if (typeof window !== 'undefined' && window.SpectralFilaments) {
+                        try { window.SpectralFilaments.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m10/filaments] init error:', err); }
+                    }
                     
                     setTimeout(() => {
                         updateLoadingText('Ready!');

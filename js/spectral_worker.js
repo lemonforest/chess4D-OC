@@ -559,6 +559,52 @@ _do_preview()
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 
+  // M10 board heat map / filaments — return the chosen channels'
+  // per-cell intensities for the full board (4096 cells per channel)
+  // so JS can render a heatmap overlay or compute streamlines from
+  // the gradient field. Pulls from the M6 encoder cache so it costs
+  // a slice per request (~no work) once the cache is warm.
+  //
+  // args: { channels: ['A1','STD4_X',...] }
+  // returns: { ok, history_len, channels: { name: [4096 floats], ... } }
+  getBoardEncoding(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const channels = (args && Array.isArray(args.channels) && args.channels.length > 0)
+      ? args.channels
+      : ['A1'];
+    pyodide.globals.set('_board_enc_channels', channels);
+    return pyodide
+      .runPython(
+        `
+def _do_board_encoding():
+    if _encoder_cache is None or _encoder_cache.get('history_len') != _history_len:
+        _refresh_encoder_cache()
+    cache = _encoder_cache
+    if cache is None or cache.get('error'):
+        return {'ok': False, 'reason': (cache or {}).get('error', 'encoder unavailable'), 'history_len': _history_len}
+    enc = cache['encoding']
+    chans = cache['channels']  # [(name, offset), ...]
+    by_name = {n: o for (n, o) in chans}
+    out = {}
+    for name in list(_board_enc_channels):
+        offset = by_name.get(name)
+        if offset is None:
+            out[name] = None
+            continue
+        slc = enc[offset:offset + 4096]
+        # to_py via dict_converter handles list-of-floats efficiently.
+        out[name] = [float(v) for v in slc]
+    return {
+        'ok': True,
+        'history_len': _history_len,
+        'channels': out,
+    }
+_do_board_encoding()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
   // Diagnostic — returns piece count + state type. Used by the debug panel.
   getInitialPositionInfo() {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
