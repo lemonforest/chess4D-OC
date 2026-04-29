@@ -86,14 +86,17 @@ Tied to the design in `docs/qm_4d_design.md`. These methods light up the M14.x v
 
 ## Things we forgot — open questions / gaps
 
-The user said *"we always forget something"*. Here's the list of things that are gaps in our current API but haven't surfaced yet:
+The user said *"we always forget something"*. Here's the list of things that are gaps in our current API but haven't surfaced yet.
+
+**Status update (2026-04-29 from chess-maths notebook audit)**: chess-spectral 1.5 has shipped the **kinematic** half of the QM extension — `chess_spectral.qm_4d` exists with the five non-pawn `H_piece_4` Hermitian observables, refined per-piece spectrum bounds, encoder spectral-identity verified at machine precision. Track B (full unitary `applyMoveQm` + Born sampling + entanglement viz) is still pending. The 1.5 row in the "Missing for chess-spectral 1.5" table below should be read as **partially shipped**. The 1.6 engine module (proposed below) is also under active design — see notebook §16. **Phase 6 calibration warning**: per the notebook's Othello prior, the engine eval will likely show a "shallow-depth wins, deep-depth vanishes" pattern; tournament tests must run at multiple depths (L4/L8/L16) to not over-fit weights to shallow play.
+
 
 ### Gameplay edge cases not exposed
 
 | Gap | Current state | What to do |
 |---|---|---|
 | **Promotion choice** | `applyMove(origin, dest)` doesn't take a promotion target — chess4d auto-promotes (probably to queen). | Add optional `promoteTo: 'queen'\|'rook'\|...` arg. |
-| **Castling notation** | Castling moves are sent as king-move-2-squares; chess4d figures it out from the king/rook positions. Doesn't fail loudly if rook moved. | Verify chess4d 0.4 handles this correctly. Add a test in M3.5 corpus. |
+| **Castling notation** | Castling moves are sent as king-move-2-squares; chess4d figures it out from the king/rook positions. | **Validated** by 2D notebook §11.4.3.1 (P_castle predicate closes the castling gap upstream). chess4d 0.4 handles correctly. |
 | **En passant** | Bridge has no special EP method — chess4d handles it as part of `applyMove`. | Verify works correctly with our move-input format. |
 | **Threefold repetition** | Not tracked anywhere. UI never declares the draw. | Add `getDrawStatus()` → `'none'\|'threefold'\|'fifty-move'\|'insufficient'`. |
 | **Move history JSON** | M11.6 export builds it in JS from `MoveManager.moveHistory.toList()`. Chess-spectral doesn't expose its own history. | Could add `getMoveHistory()` → `[Move4D, ...]` for symmetry. |

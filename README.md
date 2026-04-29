@@ -168,6 +168,8 @@ An interior cell (not on any boundary) has exactly **3⁴ - 1 = 80 adjacent neig
 
 The same piece movement rules in their **phase-domain (Fourier-domain) form**, as implemented in [`chess_spectral.phase_operators_4d`](https://pypi.org/project/chess-spectral/). Each lattice point `(x,y,z,w) ∈ {0..7}⁴` maps to a phase `φ(x,y,z,w) ∈ Z/145451Z` via a perfect-hash construction; piece operators become integer translations on that finite cyclic group.
 
+> **Note on the lattice**: the underlying chess board is the **path-graph product** `P_8 □ P_8 □ P_8 □ P_8` (open boundary, no wrap-around). Earlier text and shorthand sometimes wrote "Z⁴" or "Z_8⁴" — these are coordinate notations, not Cayley-graph descriptions. The phase operators happen to live on a `Z/145451·Z` finite cyclic group (different object), but this is a perfect-hash addressing trick that doesn't impose a cyclic boundary on the chess board itself. The `B_4` symmetry group of the lattice (signed permutations of the 4 axes) is correspondingly hyperoctahedral, not toroidal.
+
 #### Phase Map
 
 ```
