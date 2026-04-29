@@ -692,6 +692,19 @@
                         <input type="range" id="opacity-slider" min="0" max="100" value="80" class="slider">
                         <span class="axis-value" id="opacity-value">80%</span>
                     </div>
+
+                    <!-- M11.3.5: vertical stack compression. Scales the
+                         entire game board mesh (boards + pieces + possible-
+                         move highlights) AND the spectral cloud + filaments
+                         in Y so the 64-board stack collapses into a more
+                         compact "spectral view" or expands for clearer
+                         per-board reading. -->
+                    <div class="axis-control"
+                         title="Compress or expand the vertical gap between board layers. 1.0 is normal; below 1.0 squashes the 64-board stack into a more compact spectral view; above 1.0 spreads it for clearer per-board reading.">
+                        <label>Stack height</label>
+                        <input type="range" id="stack-height-slider" min="20" max="150" value="100" class="slider">
+                        <span class="axis-value" id="stack-height-value">100%</span>
+                    </div>
                 </div>
             </section>
 
@@ -1337,6 +1350,51 @@
           } finally {
             btn.disabled = false;
           }
+        });
+      });
+    </script>
+
+    <!-- M11.3.5: Stack-height slider in 4D Navigation card. Compresses /
+         expands the vertical gap between the 64 board layers, plus the
+         cloud and filaments in lockstep. localStorage-persisted. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var slider = document.getElementById('stack-height-slider');
+        var display = document.getElementById('stack-height-value');
+        if (!slider) return;
+        var KEY = 'chess4d-oc.stack-height';
+        function apply(pct) {
+          var s = pct / 100;
+          // Three independent meshes need scaling: the gameBoard mesh
+          // (boards + pieces + possible-move highlights), the heatmap
+          // cloud + maxima overlay, and the filaments line mesh. They're
+          // separate scene children, so we touch each.
+          if (window.gameBoard && window.gameBoard.graphics && window.gameBoard.graphics.mesh) {
+            window.gameBoard.graphics.mesh.scale.y = s;
+          }
+          if (window.SpectralHeatmap && typeof window.SpectralHeatmap.setStackScale === 'function') {
+            window.SpectralHeatmap.setStackScale(s);
+          }
+          if (window.SpectralFilaments && typeof window.SpectralFilaments.setStackScale === 'function') {
+            window.SpectralFilaments.setStackScale(s);
+          }
+          window.__GAME_DIRTY__ = true;
+        }
+        // localStorage: restore on init.
+        var initial = 100;
+        try {
+          var v = localStorage.getItem(KEY);
+          if (v && Number.isFinite(parseInt(v, 10))) initial = parseInt(v, 10);
+        } catch (_) {}
+        slider.value = String(Math.max(20, Math.min(150, initial)));
+        if (display) display.textContent = slider.value + '%';
+        apply(parseInt(slider.value, 10));
+        slider.addEventListener('input', function () {
+          if (display) display.textContent = slider.value + '%';
+          apply(parseInt(slider.value, 10));
+        });
+        slider.addEventListener('change', function () {
+          try { localStorage.setItem(KEY, slider.value); } catch (_) {}
         });
       });
     </script>
