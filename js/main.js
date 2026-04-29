@@ -2036,7 +2036,45 @@ function _exposeBotHooks() {
     window.currentGameMode = currentGameMode;
 }
 
-function selectPiece(mesh) {
+// M4b.1: bridge-first legality lookup for the user-click overlay path.
+// Tries SpectralBridge.legalMoves (Pyodide / chess-spectral) first; falls
+// back to JS Piece.getPossibleMoves + filterIllegalMoves if the bridge
+// isn't ready (early in page boot) or returns an error. Returns a Promise
+// of the legal-move array. Backward-compatible — when bridge is ready
+// the user gets canonical chess-spectral legality (including check-aware
+// filtering); when it isn't, they get the existing JS engine's moves.
+async function _legalMovesFor(piece, boardCoords) {
+    if (typeof window !== 'undefined' && window.SpectralBridge && window.__SPECTRAL_INFO__) {
+        try {
+            const res = await window.SpectralBridge.legalMoves({
+                x: boardCoords.x, y: boardCoords.y, z: boardCoords.z, w: boardCoords.w,
+            });
+            if (res && res.ok && Array.isArray(res.moves)) {
+                console.log(
+                    '[m4b.1] bridge.legalMoves at (' + boardCoords.x + ',' + boardCoords.y +
+                    ',' + boardCoords.z + ',' + boardCoords.w + ') → ' + res.moves.length + ' moves'
+                );
+                return res.moves;
+            }
+            console.warn('[m4b.1] bridge.legalMoves not-ok; falling back to JS:', res && res.reason);
+        } catch (err) {
+            console.warn('[m4b.1] bridge.legalMoves threw; falling back to JS:', err);
+        }
+    }
+    // JS fallback. Same as the M4a path.
+    if (!piece || !piece.getPossibleMoves) return [];
+    let moves = piece.getPossibleMoves(
+        gameBoard.pieces, boardCoords.x, boardCoords.y, boardCoords.z, boardCoords.w
+    );
+    if (typeof filterIllegalMoves === 'function') {
+        moves = filterIllegalMoves(
+            gameBoard, boardCoords.x, boardCoords.y, boardCoords.z, boardCoords.w, moves, piece.team
+        );
+    }
+    return moves;
+}
+
+async function selectPiece(mesh) {
     if (!mesh || !gameBoard) return;
     
     // Deselect previous piece
@@ -2088,26 +2126,13 @@ function selectPiece(mesh) {
     gameState.selectedPiece = mesh;
     gameState.selectedPieceData = piece;
     
-    // Get possible moves
-    let possibleMoves = piece.getPossibleMoves(
-        gameBoard.pieces,
-        boardCoords.x,
-        boardCoords.y,
-        boardCoords.z,
-        boardCoords.w
-    );
-    
-    // Filter out illegal moves (moves that leave own king in check)
-    possibleMoves = filterIllegalMoves(
-        gameBoard,
-        boardCoords.x,
-        boardCoords.y,
-        boardCoords.z,
-        boardCoords.w,
-        possibleMoves,
-        piece.team
-    );
-    
+    // M4b.1: route legality through the bridge (chess-spectral) when
+    // available, fall back to JS path otherwise. The bridge already
+    // does check-filtering server-side, so we don't double-filter on
+    // the bridge path; the JS fallback path applies filterIllegalMoves
+    // because Piece.getPossibleMoves doesn't.
+    let possibleMoves = await _legalMovesFor(piece, boardCoords);
+
     gameState.possibleMoves = possibleMoves;
     
     // Check for checkmate/stalemate after filtering moves
