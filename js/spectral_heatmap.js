@@ -46,6 +46,15 @@
   let colorMode  = 'unipolar';   // 'unipolar' | 'signed'
   let showMaxima = false;
   let _initRequested = false;
+  // M11.3 — slice axis (null disables) + per-axis index in [0,7]. When
+  // a slice is active, off-slice cells get scale=0 (effectively hidden)
+  // so the user sees one cross-section through the 4D volume at a time.
+  let sliceAxis  = null;         // null | 'x' | 'y' | 'z' | 'w'
+  let sliceValue = 4;            // 0..7
+  // M11.3 — intensity threshold in [0, 1]. Cells with mapped t below the
+  // threshold get scale=0. Slider sweeps a "percentile shell": 0 = show
+  // everything (default), 0.75 = show only top quartile, 0.95 = top 5%.
+  let intensityThreshold = 0;
 
   // Cached per-cell base translation (no scale) so refresh() only has
   // to compose translation × scale, not re-evaluate boardCoordinates.
@@ -264,6 +273,19 @@
 
       const colorFn = (colorMode === 'signed') ? rdBuColor : viridisColor;
       let totalIntensity = 0;
+      let cellsShown = 0;
+      // Pre-compute the "slice axis bit-extractor" once so the inner loop
+      // is branch-free per cell.
+      // For idx = (x<<9) | (y<<6) | (z<<3) | w, axis bits live at:
+      //   x: (idx >> 9) & 7,  y: (idx >> 6) & 7,
+      //   z: (idx >> 3) & 7,  w: idx & 7
+      const sliceShift = (sliceAxis === 'x') ? 9
+                       : (sliceAxis === 'y') ? 6
+                       : (sliceAxis === 'z') ? 3
+                       : (sliceAxis === 'w') ? 0
+                       : -1;
+      const useSlice = sliceShift >= 0;
+      const useThreshold = intensityThreshold > 0;
       for (let i = 0; i < arr.length; i++) {
         let t = (arr[i] - mapLo) / range;
         if (t < 0) t = 0; else if (t > 1) t = 1;
@@ -275,7 +297,19 @@
         // |value| (distance from neutral), so positive AND negative lobes
         // both get visible volume. In unipolar mode, scale tracks t directly.
         const heightT = (colorMode === 'signed') ? Math.abs(t - 0.5) * 2 : t;
-        const s = 0.45 + heightT * 0.60;
+        let s = 0.45 + heightT * 0.60;
+        // M11.3 filters: slice mask (hide off-axis cells) and intensity
+        // threshold (hide cells below the percentile floor). Either filter
+        // collapses the box to scale 0 (invisible).
+        if (useSlice && ((i >> sliceShift) & 7) !== sliceValue) {
+          s = 0;
+        } else if (useThreshold && (
+          (colorMode === 'signed' ? Math.abs(t - 0.5) * 2 : t) < intensityThreshold
+        )) {
+          s = 0;
+        } else {
+          cellsShown++;
+        }
         _writeMatrix(im, i, s, _basePos[i * 3], _basePos[i * 3 + 1], _basePos[i * 3 + 2]);
       }
       im.instanceColor.needsUpdate  = true;
@@ -285,22 +319,33 @@
       // Local-max overlay: detected on the *transformed* values so a
       // log1p-transform-revealed peak still registers. Renders as
       // bright spheres at the world position of each local-max cell.
+      // M11.3: respect the slice and threshold filters so the overlay
+      // visibly tracks what the user is exploring.
       if (showMaxima) {
         const overlay = buildMaximaMesh();
         if (overlay) {
           const maxima = _findLocalMaxima(arr);
-          const k = Math.min(maxima.length, MAX_LOCAL_MAXIMA_CAP);
-          for (let i = 0; i < k; i++) {
+          let written = 0;
+          for (let i = 0; i < maxima.length && written < MAX_LOCAL_MAXIMA_CAP; i++) {
             const cell = maxima[i];
+            // Respect slice axis filter.
+            if (useSlice && ((cell >> sliceShift) & 7) !== sliceValue) continue;
+            // Respect threshold filter.
+            if (useThreshold) {
+              const t = _intensity[cell];
+              const heightT = (colorMode === 'signed') ? Math.abs(t - 0.5) * 2 : t;
+              if (heightT < intensityThreshold) continue;
+            }
             _writeMatrix(
-              overlay, i, 1.0,
+              overlay, written, 1.0,
               _basePos[cell * 3], _basePos[cell * 3 + 1], _basePos[cell * 3 + 2]
             );
+            written++;
           }
-          overlay.count = k;
+          overlay.count = written;
           overlay.instanceMatrix.needsUpdate = true;
           overlay.visible = true;
-          console.log(`[m11.1/heatmap] local maxima: ${k} ${k === MAX_LOCAL_MAXIMA_CAP ? '(capped)' : ''}`);
+          console.log(`[m11.1/heatmap] local maxima: ${written}/${maxima.length} shown ${written === MAX_LOCAL_MAXIMA_CAP ? '(capped)' : ''}`);
         }
       } else if (imMax) {
         imMax.visible = false;
@@ -311,7 +356,10 @@
         `[m11.1/heatmap] ch=${channel} transform=${transform} mode=${colorMode} ` +
           `clip=[${pLo.toExponential(3)}, ${pHi.toExponential(3)}] ` +
           `mapped=[${mapLo.toExponential(3)}, ${mapHi.toExponential(3)}] ` +
-          `meanT=${(totalIntensity / arr.length).toFixed(3)}`
+          `meanT=${(totalIntensity / arr.length).toFixed(3)} ` +
+          `cellsShown=${cellsShown}/${arr.length}` +
+          (useSlice ? ` slice=${sliceAxis}=${sliceValue}` : '') +
+          (useThreshold ? ` threshold=${intensityThreshold.toFixed(2)}` : '')
       );
     } catch (err) {
       console.warn('[m10/heatmap] refresh error:', err);
@@ -335,6 +383,21 @@
         if (mFlag === 'signed') colorMode = 'signed';
         const xFlag = params.get('heatmapMaxima');
         if (xFlag === '1' || xFlag === 'on') showMaxima = true;
+        // M11.3 slice/threshold flags. Format: ?heatmapSlice=w:4,
+        // ?heatmapThreshold=0.75
+        const sFlag = params.get('heatmapSlice');
+        if (sFlag) {
+          const parts = sFlag.split(':');
+          const ax = parts[0];
+          const vv = parseInt(parts[1], 10);
+          if ((ax === 'x' || ax === 'y' || ax === 'z' || ax === 'w') && Number.isFinite(vv)) {
+            sliceAxis = ax;
+            sliceValue = Math.max(0, Math.min(7, vv));
+          }
+        }
+        const tFlag2 = params.get('heatmapThreshold');
+        const tNum = parseFloat(tFlag2);
+        if (Number.isFinite(tNum)) intensityThreshold = Math.max(0, Math.min(1, tNum));
         const flag = params.get('heatmap');
         if (flag && flag !== 'off') {
           channel = flag;
@@ -376,6 +439,40 @@
       else if (imMax) imMax.visible = false;
       if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     },
+    /**
+     * M11.3: pin a slice axis. Off-slice cells are hidden so the user
+     * sees one cross-section through the 4D volume at a time.
+     *   axis: null | 'x' | 'y' | 'z' | 'w'    (null disables slicing)
+     *   value: integer 0..7 (clamped)
+     */
+    setSlice(axis, value) {
+      const ok = (axis === null || axis === undefined ||
+                  axis === 'x' || axis === 'y' || axis === 'z' || axis === 'w');
+      if (!ok) return;
+      const newAxis = (axis === null || axis === undefined) ? null : axis;
+      let newValue = sliceValue;
+      if (Number.isFinite(value)) {
+        newValue = Math.max(0, Math.min(7, Math.round(value)));
+      }
+      if (newAxis === sliceAxis && newValue === sliceValue) return;
+      sliceAxis = newAxis;
+      sliceValue = newValue;
+      if (enabled) refresh();
+    },
+    getSlice() { return { axis: sliceAxis, value: sliceValue }; },
+    /**
+     * M11.3: hide cells whose mapped intensity is below `t` ∈ [0, 1].
+     * t=0 = show everything; t=0.75 = top quartile only; t=0.95 = top 5%.
+     * Sweeping the slider visualizes percentile shells.
+     */
+    setIntensityThreshold(t) {
+      if (!Number.isFinite(t)) return;
+      const v = Math.max(0, Math.min(1, t));
+      if (v === intensityThreshold) return;
+      intensityThreshold = v;
+      if (enabled) refresh();
+    },
+    getIntensityThreshold() { return intensityThreshold; },
     refresh,
     getChannel()   { return channel; },
     isEnabled()    { return enabled; },
