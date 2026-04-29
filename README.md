@@ -341,32 +341,64 @@ chess4D-OC/
 
 ### Game Engine Features
 
-- ✅ **Complete move generation** for all piece types
-- ✅ **Pseudo-legal and legal move filtering** with multi-king support
-- ✅ **Attack-map construction** for check detection
-- ✅ **Multi-king checkmate detection** (any king in unavoidable check)
-- ✅ **Generalized castling** (X-axis only, within fixed (z,w) slice)
-- ✅ **Generalized en passant** (separate for Y-oriented and W-oriented pawns)
-- ✅ **Pawn promotion** at terminal boundaries
-- ✅ **Repetition detection** (threefold repetition)
-- ✅ **50-move rule** implementation
-- ✅ **Zobrist-style hashing** for position comparison
+Inherited from the upstream + extended via [`chess-spectral`](https://pypi.org/project/chess-spectral/) and [`python-chess4d-oana-chiru`](https://pypi.org/project/python-chess4d-oana-chiru/) running in Pyodide:
+
+- ✅ **Complete move generation** for all piece types (chess-spectral phase-operator and spatial paths; selectable via `?legalityOps=`)
+- ✅ **Multi-king legality** — full board, no piece-count cap (M4b removed the upstream's silent 50-piece truncation)
+- ✅ **Attack-map / check detection** (Python chess4d's `inCheck`)
+- ✅ **Multi-king checkmate / stalemate** detection
+- ✅ **Generalized castling** (X-axis, fixed (z,w) slice)
+- ✅ **Generalized en passant** (Y- and W-oriented pawns separately)
+- ✅ **Pawn promotion** at terminal boundaries (auto-promote — promotion-piece arg not yet exposed; see [bridge_api.md](docs/bridge_api.md) gap list)
+- ✅ **Position hashing** for the M13.1 transposition table (smart-bot search)
+- ⚠️ **Threefold repetition / 50-move rule** — not currently exposed; tracked in the bridge-API gap list for chess-spectral 1.5/1.6
+- ⚠️ **Zobrist hashing** — only inside the M13.1 smart-bot's TT (string-keyed, not full Zobrist); whole-engine Zobrist deferred to chess-spectral 1.6 engine module
+
+**Move legality oracle** is async via the `SpectralBridge` Pyodide worker (M4b.1 — user-click overlay). Bot strategies still use synchronous JS legality (`Piece.getPossibleMoves`) until chess-spectral 1.6 engine ships and Bot.js becomes a thin wrapper around `bridge.getBestMove`.
 
 ### Visualization Architecture
 
-- **Three.js r128**: 3D rendering engine
-- **OrbitControls**: Camera navigation
-- **OBJLoader**: 3D model loading
-- **Slice-based projection**: All 64 (z,w) boards rendered as 3D planes
-- **Layered transparency**: Occlusion management for dense scenes
-- **Quaternion interpolation**: Smooth camera rotation
+- **Three.js r184** (April 2026; M7b upgrade from r128) — loaded as ES module via import map; addons under `three/addons/`. Pinned to exactly `0.184.0`.
+- **OrbitControls** + **OBJLoader** — Three.js addons exposed as globals for the (still script-mode) app code.
+- **WebGL renderer** by default; optional **WebGPU** path via `?gpu=webgpu` (M7e — currently no-ops to WebGL since the bundle is the WebGL build).
+- **Pyodide v0.26.x** in a Web Worker — boots chess-spectral + chess4d via `micropip` at runtime. Hand-rolled `{id, method, args}` postMessage envelope; no Comlink.
+- **Render-on-demand** (M7c) — `renderer.render` only fires on a dirty-flag (input, animation queue, Pyodide responses). Idles to zero CPU between moves.
+- **Shared materials** (M7c) — 4 `MeshStandardMaterial`s instead of 896; clone-and-mutate for per-piece highlights.
+- **InstancedMesh** rendering (M7d) — 12 `THREE.InstancedMesh` (one per piece-type-and-team) under `?renderer=instanced`. Per-instance color drives the hover highlight.
+- **Low-poly piece OBJs** (M7a) — 80 % triangle reduction, default `?quality=low`. `?quality=high` opts back into the originals.
+- **Cloudflare Pages** — Git Integration, no build step. PR previews are automatic. `_headers` carries COOP/COEP for SharedArrayBuffer readiness.
+
+### Spectral visualization layers
+
+Each layer is a sibling module; they share the channel selector and stack-height slider but otherwise compose freely:
+
+| Module | What it draws | Milestone |
+|---|---|---|
+| `spectral_overlay.js` | Hover preview — destination cells tinted by post-move signature | M5 |
+| `spectral_heatmap.js` | Volumetric BoxGeometry cloud over the 4D lattice | M10 / M11 / M11.1 / M11.3.x |
+| `spectral_board_tint.js` | Channel colors painted on the chess-board surface itself | M11.3.6 |
+| `spectral_isosurfaces.js` | Marching-cubes nested shells at percentile thresholds | M11.3.1 |
+| `spectral_dotplot.js` | One sphere per cell, no inter-cell blending | M11.9 |
+| `spectral_filaments.js` | Streamline filaments + Morse-Smale topology mode | M10 / M11.2 |
+| `spectral_commutator.js` | Phase-operator commutator [P_A, P_B] cells | M12 |
+| `topology4d.js` | Critical-point detection + 4×4 Hessian Jacobi eigen-solver (helper) | M11.2 |
+| `phase_ops_4d.js` | JS port of chess-spectral phase ops (parity reference + M12 backend) | M12.0 |
+
+Multi-layer view: see the **Preset** dropdown in the spectral card or stack the URL flags (e.g. `?heatmap=A1&filaments=1&topology=1&heatmapMaxima=1`).
 
 ### Performance Characteristics
 
-- **Branching factor**: Mean ~74 legal moves in midgame positions
-- **State space**: 4,096 board positions, 896 pieces in initial setup
-- **Move generation**: Optimized with piece-lists and early termination
-- **Attack-map construction**: O(P × M_max) where P is piece count, M_max ≈ 80
+| Metric | Value |
+|---|---|
+| Branching factor | Mean ~74 legal moves in midgame positions |
+| State space | 4,096 board positions, 896 pieces in initial setup |
+| Pyodide cold-start | 3–8 s on first page load (loading overlay covers UI until ready) |
+| Bridge round-trip | 10–50 ms per call after warm-up |
+| Spectral encoding refresh | Cached per move (M6 incremental delta math); per-move cost <30 ms post-warmup |
+| Heatmap cloud refresh | One InstancedMesh `setMatrixAt` per cell × 4096 cells = ~5 ms wall-clock |
+| Topology mode (M11.2) | Critical-point detection + 4×4 Jacobi eigendecomp ≈ 1–2 ms; 30–60 critical points typical |
+| Smart-bot search (M13.1) | Iterative-deepening alpha-beta to depth 3 with TT in ~500 ms (4 s budget) |
+| Render-on-demand idle | 0 % CPU when nothing's animating (M7c dirty-flag loop) |
 
 ---
 
