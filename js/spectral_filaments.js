@@ -1,35 +1,39 @@
-// spectral_filaments.js — M10 streamlines, M11 sub-cell + gradient refactor.
+// spectral_filaments.js — streamline filaments through the spectral field.
+// Evolution: M10 (snap-to-lattice, straight lines, converged to peaks) →
+// M11 (sub-cell + bidirectional + channel-gradient) → M11.2 (Morse-Smale
+// topology mode) → M11.3.5 (stack-scale hook) → M11.3.7 (visibility tweaks).
 //
-// M10 shipped this with two visual problems:
-//   1. Lines were straight because every step was snapped to ±1 along the
-//      dominant lattice axis. The lattice IS discrete but the field is
-//      a discrete sampling of an underlying continuum, and the eye needs
-//      sub-cell smoothness to read curves.
-//   2. Lines all went to the same spot because forward-only gradient
-//      flow converges to local maxima (basins of attraction). A user
-//      asking "show me the shape of the heat map" expects field lines
-//      that pass THROUGH structure, not lines that sink into it.
+// What it renders: a single LineSegments mesh (pre-allocated to the
+// SEED_COUNT_MAX × STEP_COUNT_MAX buffer cap so seed/step sliders never
+// reallocate) of 3D field-line polylines integrated through either:
+//   - the STD4 4-vector field (default — natural "matter field direction")
+//   - the gradient of any scalar channel (when the board-signature dropdown
+//     picks a non-STD4 channel, filaments auto-switch to that channel's
+//     gradient — one dropdown drives both visualizations)
 //
-// M11 fixes both:
-//   - Continuous sub-cell positions (cx, cy, cz, cw) ∈ [0,7] in each
-//     axis. Each step moves a fractional amount in the unit-vector
-//     direction, so the polyline curves through the lattice.
-//   - Quadrilinear interpolation to sample channel values at sub-cell
-//     positions; central differences (h=0.5) to compute the gradient
-//     at any point.
-//   - Bidirectional integration: from each seed, walk half the steps
-//     forward (gradient direction) and half backward (-gradient). The
-//     line passes through the seed instead of starting there, so
-//     visually the streamlines trace structure rather than terminate
-//     at it.
-//   - Channel binding: by default the filaments use the STD4 4-vector
-//     field (the natural "lattice direction" of the matter field). When
-//     the M10 board-signature dropdown selects a non-STD4 channel, the
-//     filaments switch to that channel's gradient automatically — one
-//     dropdown drives both visualizations.
+// Stride seeding mode (default):
+//   Deterministic stride over 4096 cells; each seed integrates bidirection-
+//   ally (half forward in +∇φ, half backward in −∇φ) so the polyline passes
+//   THROUGH the seed instead of terminating at it. Sub-cell quadrilinear
+//   interpolation produces curved arcs rather than lattice-step zigzags.
 //
-// Buffer layout is unchanged from M10 (pre-allocated to the param caps),
-// so the seed/step sliders mutate parameters without reallocating.
+// Topology mode (M11.2, opt-in via checkbox or ?topology=1):
+//   Replaces stride seeding with Morse–Smale extraction via Topology4D.
+//   For each critical point (max/min/saddle), the Hessian eigenvectors
+//   become seed directions; lines integrate in sign(λ_k)·∇φ. Coloring:
+//   ascending manifold (λ>0) red, descending (λ<0) blue. The visible
+//   line set IS the topological 1-skeleton of the field. Solves the
+//   "lines all go to one spot" complaint definitively.
+//
+// API:
+//   SpectralFilaments.init(scene, gameBoard)
+//   SpectralFilaments.setEnabled(bool)
+//   SpectralFilaments.refresh()
+//   SpectralFilaments.setParams({seedCount, stepCount})
+//   SpectralFilaments.setChannel(name | null)         — null/'STD4' = vector field
+//   SpectralFilaments.setTopologyMode(bool)           — M11.2
+//   SpectralFilaments.setStackScale(s)                — M11.3.5
+//   Getters: getParams / getChannel / getTopologyMode / isEnabled
 
 (function () {
   'use strict';
@@ -90,13 +94,11 @@
     });
     lineMesh = new THREE.LineSegments(geom, mat);
     lineMesh.frustumCulled = false;
-    lineMesh.renderOrder = 5; // after cloud (2), tint (1), iso (TBD)
+    lineMesh.renderOrder = 5; // after cloud (2), tint (1), iso (3 + shellIdx, M11.3.1)
     lineMesh.visible = false;
     _scene.add(lineMesh);
     return lineMesh;
   }
-
-  function _cellIdx(x, y, z, w) { return (x << 9) | (y << 6) | (z << 3) | w; }
 
   // Sample seed cells: deterministic stride for reproducibility.
   function _seedIndices() {
@@ -371,12 +373,12 @@
       if (useChannel) {
         const res = await window.SpectralBridge.getBoardEncoding([_channel]);
         if (!res || !res.ok) {
-          console.warn('[m10/filaments] getBoardEncoding(scalar) failed:', res && res.reason);
+          console.warn('[m11/filaments] getBoardEncoding(scalar) failed:', res && res.reason);
           return;
         }
         const arr = res.channels && res.channels[_channel];
         if (!arr || !arr.length) {
-          console.warn(`[m10/filaments] channel "${_channel}" not in response`);
+          console.warn(`[m11/filaments] channel "${_channel}" not in response`);
           return;
         }
         sampleField = function (x, y, z, w) { return _gradientScalar(arr, x, y, z, w); };
@@ -384,7 +386,7 @@
       } else {
         const res = await window.SpectralBridge.getBoardEncoding(STD4_NAMES);
         if (!res || !res.ok) {
-          console.warn('[m10/filaments] getBoardEncoding(STD4) failed:', res && res.reason);
+          console.warn('[m11/filaments] getBoardEncoding(STD4) failed:', res && res.reason);
           return;
         }
         const X = res.channels.STD4_X;
@@ -392,7 +394,7 @@
         const Z = res.channels.STD4_Z;
         const W = res.channels.STD4_W;
         if (!X || !Y || !Z || !W) {
-          console.warn('[m10/filaments] STD4 channel slice incomplete');
+          console.warn('[m11/filaments] STD4 channel slice incomplete');
           return;
         }
         sampleField = function (x, y, z, w) { return _vectorSTD4(X, Y, Z, W, x, y, z, w); };
@@ -472,12 +474,12 @@
       mesh.geometry.computeBoundingSphere();
       if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
       console.log(
-        `[m10/filaments] source=${sourceLabel} seeds=${seeds.length} ` +
+        `[m11/filaments] source=${sourceLabel} seeds=${seeds.length} ` +
           `step=${STEP_SCALE} totalSteps=${STEP_COUNT} ` +
           `vertices=${writeIdx} (segments=${writeIdx / 2})`
       );
     } catch (err) {
-      console.warn('[m10/filaments] refresh error:', err);
+      console.warn('[m11/filaments] refresh error:', err);
     }
   }
 

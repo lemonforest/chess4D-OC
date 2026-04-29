@@ -33,7 +33,9 @@
   let channel = 'A1';
   let _initRequested = false;
 
-  const _basePos = new Float32Array(4096 * 3);
+  // M11.8: previously cached per-cell base positions, but this module
+  // never reads them back — the InstancedMesh matrices are set once in
+  // buildMesh and refresh() only updates colors, not positions. Removed.
 
   // Viridis-ish ramp — copy of spectral_heatmap.js so the modules stay
   // independent (heatmap might evolve to a custom ramp later).
@@ -110,9 +112,6 @@
             // the merged checker geometry. Pieces stand on the surface
             // at slightly higher Y so they remain visible above the tint.
             const ty = pos.y + 3.0;
-            _basePos[idx * 3 + 0] = pos.x;
-            _basePos[idx * 3 + 1] = ty;
-            _basePos[idx * 3 + 2] = pos.z;
             matrix.makeTranslation(pos.x, ty, pos.z);
             im.setMatrixAt(idx, matrix);
           }
