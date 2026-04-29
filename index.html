@@ -519,6 +519,16 @@
                         title="Download the current position + move history as a JSON file. Pieces are in chess-spectral's JSONL fixture format (square_int → piece-letter); moves array gives the from/to coordinates of every move played.">
                     ⬇ Export game (JSON)
                 </button>
+                <!-- M11.6.1: load a previously-exported game. Replays the
+                     moves array through the existing moveManager.move chain
+                     (which fires bridge.applyMove + spectral overlay
+                     refresh), so the live state matches the loaded game
+                     exactly. -->
+                <button class="btn btn-secondary btn-block" id="load-game-btn"
+                        title="Load a previously-exported game JSON. Replays every move from the file's moves array on top of a fresh starting position. Live state will match the loaded game.">
+                    ⬆ Load game (JSON)
+                </button>
+                <input type="file" id="load-game-file" accept=".json,application/json" style="display: none;">
             </section>
             
             <!-- Statistics -->
@@ -1726,6 +1736,109 @@
               ' (' + Object.keys(pieces).length + ' pieces, ' +
               moves.length + ' moves)'
           );
+        });
+      });
+    </script>
+
+    <!-- M11.6.1: load a previously-exported game. The export format is
+         chess-spectral JSONL fixture + a `moves` array of from/to
+         coordinates; we replay the moves array through moveManager.move
+         to reconstruct the position. Visual replay (animation per move)
+         lets the user watch the game play out. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var btn  = document.getElementById('load-game-btn');
+        var file = document.getElementById('load-game-file');
+        if (!btn || !file) return;
+        btn.addEventListener('click', function () {
+          file.value = ''; // reset so re-loading the same file fires 'change'
+          file.click();
+        });
+        file.addEventListener('change', async function () {
+          var f = file.files && file.files[0];
+          if (!f) return;
+          if (!confirm('Load "' + f.name + '"? The current game will be discarded.')) return;
+          var text;
+          try {
+            text = await f.text();
+          } catch (err) {
+            alert('Could not read file: ' + err.message);
+            return;
+          }
+          var data;
+          try {
+            data = JSON.parse(text);
+          } catch (err) {
+            alert('Invalid JSON: ' + err.message);
+            return;
+          }
+          if (!data || !Array.isArray(data.moves)) {
+            alert('Invalid game format: missing "moves" array. Expected a chess4D-OC export.');
+            return;
+          }
+
+          // Reset to initial position via the existing reset flow.
+          if (typeof resetGame === 'function') {
+            // resetGame normally pops a confirm; we already did that, so
+            // call the underlying logic directly. Easiest: reset the bridge
+            // and the move manager + gameBoard.
+            try {
+              if (window.SpectralBridge && window.SpectralBridge.resetToInitial) {
+                await window.SpectralBridge.resetToInitial();
+              }
+              if (window.gameBoard && typeof window.gameBoard.initializeStartingPositions === 'function') {
+                // Clear current pieces, then re-init.
+                window.gameBoard.abandon && window.gameBoard.abandon();
+                window.gameBoard.initializeStartingPositions();
+              }
+              if (window.moveManager && typeof window.moveManager.constructor === 'function') {
+                window.moveManager = new window.moveManager.constructor(window.gameBoard, 0, 'localmode');
+              }
+            } catch (err) {
+              console.warn('[m11.6.1/load] reset error:', err);
+              alert('Reset failed: ' + err.message + '\nPage reload recommended.');
+              return;
+            }
+          }
+
+          // Replay moves. Disable the load button during replay so the
+          // user doesn't double-trigger.
+          btn.disabled = true;
+          btn.textContent = '⏳ Replaying ' + data.moves.length + ' moves…';
+          var replayed = 0;
+          var failed = 0;
+          for (var i = 0; i < data.moves.length; i++) {
+            var m = data.moves[i];
+            if (!m || !Array.isArray(m.from) || !Array.isArray(m.to) ||
+                m.from.length !== 4 || m.to.length !== 4) {
+              console.warn('[m11.6.1/load] skipping malformed move at index', i, m);
+              failed++;
+              continue;
+            }
+            try {
+              if (window.moveManager && typeof window.moveManager.move === 'function') {
+                window.moveManager.move(m.from[0], m.from[1], m.from[2], m.from[3],
+                                        m.to[0], m.to[1], m.to[2], m.to[3]);
+                replayed++;
+              }
+            } catch (err) {
+              console.warn('[m11.6.1/load] move failed at index', i, m, err);
+              failed++;
+            }
+            // Yield between moves so the UI repaints (one frame per move).
+            await new Promise(function (r) { requestAnimationFrame(r); });
+          }
+          btn.disabled = false;
+          btn.textContent = '⬆ Load game (JSON)';
+          window.__GAME_DIRTY__ = true;
+          console.log(
+            '[m11.6.1/load] replayed ' + replayed + '/' + data.moves.length +
+            ' moves' + (failed ? ' (' + failed + ' skipped)' : '')
+          );
+          if (failed > 0) {
+            alert('Loaded ' + replayed + ' moves. ' + failed +
+                  ' move(s) skipped — check console for details.');
+          }
         });
       });
     </script>
