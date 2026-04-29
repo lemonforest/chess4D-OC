@@ -223,12 +223,21 @@
         const heightT = (colorMode === 'signed') ? Math.abs(t - 0.5) * 2 : t;
         let s = 0.5 + heightT * 0.9;
 
-        if (useSlice && ((i >> sliceShift) & 7) !== sliceValue) {
+        // M11.3.8: sub-cell slice scrubbing — fractional sliceValue
+        // blends adjacent slabs at weight (1 - dist).
+        let sliceWeight = 1;
+        if (useSlice) {
+          const cellAxis = (i >> sliceShift) & 7;
+          const dist = Math.abs(sliceValue - cellAxis);
+          sliceWeight = dist >= 1 ? 0 : (1 - dist);
+        }
+        if (useSlice && sliceWeight === 0) {
           s = 0;
         } else if (useThreshold && heightT < intensityThreshold) {
           s = 0;
         } else {
           cellsShown++;
+          if (useSlice && sliceWeight < 1) s *= sliceWeight;
         }
         _writeMatrix(i, s, _basePos[i * 3], _basePos[i * 3 + 1], _basePos[i * 3 + 2]);
       }
@@ -293,7 +302,8 @@
       if (!ok) return;
       const newAxis = (axis === null || axis === undefined) ? null : axis;
       let newValue = sliceValue;
-      if (Number.isFinite(value)) newValue = Math.max(0, Math.min(7, Math.round(value)));
+      // M11.3.8: allow fractional slice values for sub-cell scrubbing.
+      if (Number.isFinite(value)) newValue = Math.max(0, Math.min(7, value));
       if (newAxis === sliceAxis && newValue === sliceValue) return;
       sliceAxis = newAxis;
       sliceValue = newValue;

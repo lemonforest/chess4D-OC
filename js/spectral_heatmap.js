@@ -352,7 +352,18 @@
         // threshold (hide cells below the percentile floor). Either filter
         // collapses the box to scale 0 (invisible). M11.3.2 adds a 4D
         // clipping sphere on top.
-        if (useSlice && ((i >> sliceShift) & 7) !== sliceValue) {
+        // M11.3.8: sub-cell slice scrubbing. sliceValue can be a non-
+        // integer (e.g. 3.5 for a half-step between W=3 and W=4); cells
+        // within ±1 of the slice value get a partial visibility weight
+        // (1 - |sliceValue - cellAxis|), so neighbouring slabs blend.
+        // Integer slice values keep the original "exact slab" behavior.
+        let sliceWeight = 1;
+        if (useSlice) {
+          const cellAxis = (i >> sliceShift) & 7;
+          const dist = Math.abs(sliceValue - cellAxis);
+          sliceWeight = dist >= 1 ? 0 : (1 - dist);
+        }
+        if (useSlice && sliceWeight === 0) {
           s = 0;
         } else if (useThreshold && (
           (colorMode === 'signed' ? Math.abs(t - 0.5) * 2 : t) < intensityThreshold
@@ -380,6 +391,13 @@
         } else {
           cellsShown++;
         }
+        // M11.3.8: apply sub-cell slice weight last (multiplies through
+        // any other masks). At integer sliceValue this is 1 for the
+        // active slab and 0 elsewhere — same as before. At non-integer
+        // sliceValue, neighbouring slabs blend with weight (1 - dist).
+        if (useSlice && sliceWeight > 0 && sliceWeight < 1 && s > 0) {
+          s *= sliceWeight;
+        }
         _writeMatrix(im, i, s, _basePos[i * 3], _basePos[i * 3 + 1], _basePos[i * 3 + 2]);
       }
       im.instanceColor.needsUpdate  = true;
@@ -398,8 +416,14 @@
           let written = 0;
           for (let i = 0; i < maxima.length && written < MAX_LOCAL_MAXIMA_CAP; i++) {
             const cell = maxima[i];
-            // Respect slice axis filter.
-            if (useSlice && ((cell >> sliceShift) & 7) !== sliceValue) continue;
+            // Respect slice axis filter (M11.3.8: sub-cell aware — only
+            // include cells within ±1 of the slice value, threshold of 0.5
+            // for the discrete sphere markers — no point partially showing
+            // a marker; show fully if it's the closest slab, else hide).
+            if (useSlice) {
+              const cellAxis = (cell >> sliceShift) & 7;
+              if (Math.abs(sliceValue - cellAxis) > 0.5) continue;
+            }
             // Respect threshold filter.
             if (useThreshold) {
               const t = _intensity[cell];
@@ -557,7 +581,9 @@
       const newAxis = (axis === null || axis === undefined) ? null : axis;
       let newValue = sliceValue;
       if (Number.isFinite(value)) {
-        newValue = Math.max(0, Math.min(7, Math.round(value)));
+        // M11.3.8: allow fractional slice values for sub-cell scrubbing.
+        // The cloud blends adjacent slabs at weight (1 - |sliceValue - cellAxis|).
+        newValue = Math.max(0, Math.min(7, value));
       }
       if (newAxis === sliceAxis && newValue === sliceValue) return;
       sliceAxis = newAxis;
