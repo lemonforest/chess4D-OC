@@ -4,9 +4,17 @@ Audited 2026-04-29 ahead of M4b.1 (chess4D-OC async cutover) and chess-spectral 
 
 The user said: *"we'll need to see what we opened up api wise and what we find we forgot. we always forget something"*. This is that audit.
 
+**Update 2026-04-29 (afternoon)**: chess-spectral **1.5.0 published to PyPI** at 19:18 UTC. Every `§17.1` QM and `§17.5` dev/debug method enumerated in the "Concrete asks" section below is **honored** in the upstream `chess_spectral.qm_4d_bridge` and `chess_spectral_4d.bridge` modules. The chess-spectral 1.6 engine module (`get_best_move`, `evaluate_position`, `run_tournament`) remains the **only outstanding ask**. Wire-up tracking:
+
+- **M11.25 (this PR)** — bump worker pin to `chess-spectral>=1.5.0`; wire `getVersion` + `getEncoderShape` (safest read-only §17.5 methods).
+- **M11.26 (next)** — FEN4 round-trip layer; wire `getFen4State`, `loadFen4`, `getDrawStatus`, `hasLegalMoves`.
+- **M11.27** — QM kinematics (`getQmState`, `getQmDensity`).
+- **M11.28+** — QM dynamics (`applyMoveQmFull`, `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation`).
+- **M14.x (later, with human review)** — visualization layers consuming the QM API.
+
 ---
 
-## Currently exposed (13 methods)
+## Currently exposed (15 methods, 13 pre-1.5 + 2 from M11.25)
 
 All methods return `Promise`s. The bridge serializes mutations through `applyChain` so move-applying methods don't race.
 
@@ -25,10 +33,12 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getBoardEncoding(channels)` | `string[]` | `{ ok, channels: { name: Float32Array(4096) } }` | All five spectral overlay modules | Refreshes only when move history advances (cached) |
 | `listInitialPieces()` | — | `{ pieces: [...] }` | M3.5 parity harness | Read-only |
 | `legalMovesAtInitial(origin)` | `{x,y,z,w}` | `{ ok, moves: [...] }` | M3.5 parity harness | Doesn't depend on current state |
+| `getVersion()` *(M11.25)* | — | `{ ok, version, source? }` | (debug panel — wire-up pending) | Calls `chess_spectral.qm_4d_bridge.get_version` |
+| `getEncoderShape()` *(M11.25)* | — | `{ ok, totalDim, channels: [{name,offset,dim}] }` | (overlay modules — wire-up pending) | 45,056-dim, 11 channels of 4096 each |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
-`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`.
+`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`.
 
 ---
 
@@ -66,21 +76,23 @@ These methods will need to be added when the engine module ships. Listed with pr
 
 ---
 
-## Missing for chess-spectral 1.5 (QM extension)
+## chess-spectral 1.5 §17.1 (QM extension) — **HONORED, wire-up pending**
 
-Tied to the design in `docs/qm_4d_design.md`. These methods light up the M14.x visualization tier:
+Tied to the design in `docs/qm_4d_design.md`. Lights up the M14.x visualization tier. All 7 methods land in `chess_spectral.qm_4d_bridge` (verified against the PyPI 1.5.0 README, 2026-04-29):
 
-| Proposed method | Args | Returns | Purpose |
+| Proposed method | Upstream symbol | Wire-up milestone | Notes |
 |---|---|---|---|
-| `getQmState()` | — | `{ ok, psi: ComplexArray, basisDim, normSq }` | Current ψ as a flat complex array (real+imag interleaved Float32). Used by M14.1 / M14.2 / M14.3. |
-| `getQmDensity(pieceId?)` | `int?` | `{ ok, density: Float32Array(4096) }` | `\|ψ_p\|²` per cell. With `pieceId` = single-piece marginal; without = full position density. M14.1 |
-| `applyMoveQm(origin, dest)` | `{x,y,z,w}` × 2 | `{ ok, U_move?: ComplexMatrix }` | Apply unitary move; optionally returns the U used (for animation). M14.3 |
-| `measureAt(coords, observable?)` | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, postCollapsePsi }` | Born-rule projective measurement. M14.5 |
-| `getDensityMatrixOf(pieceId)` | `int` | `{ ok, rho: ComplexMatrix, purity, rank }` | For entanglement viz. M14.4 |
-| `getProbabilityCurrent()` | — | `{ ok, j: Float32Array(4096 × 4) }` | `j_p(c) = Im(ψ* ∇ψ)` field for QM filaments. M14.6 |
-| `getQmExpectation(observable, weights?)` | `string, dict?` | `{ ok, value }` | `⟨ψ\|H\|ψ⟩` for bot eval. Composes with engine's `evaluatePosition`. |
+| `getQmState()` | `qm_4d_bridge.get_qm_state` | M11.27 | Returns `psi` as Float32 length 90112 (real+imag interleaved); `basisDim=45056`; `normSq` |
+| `getQmDensity(pieceId?)` | `qm_4d_bridge.get_qm_density` | M11.27 | Returns `density: Float32Array(4096)` summing `\|ψ\|²` over channels |
+| `applyMoveQm(origin, dest)` | `qm_4d_bridge.apply_move_qm` / `apply_move_qm_full` | M11.28 | `_full` variant returns assembled ψ_post; both available |
+| `measureAt(coords, observable?)` | `qm_4d_bridge.measure_at` | M11.28 | Born-rule projective measurement |
+| `getDensityMatrixOf(pieceId)` | `qm_4d_bridge.get_density_matrix_of` | M11.28 | For entanglement viz |
+| `getProbabilityCurrent()` | `qm_4d_bridge.get_probability_current` | M11.28 | `j_p(c) = Im(ψ* ∇ψ)` field for QM filaments |
+| `getQmExpectation(observable, weights?)` | `qm_4d_bridge.get_qm_expectation` | M11.28 | `⟨ψ\|H\|ψ⟩` for bot eval (composes with engine's `evaluatePosition`) |
 
-**QM-API design call**: 7 new methods, all read-only on the underlying state (the unitary `applyMoveQm` is the only mutation, and it semantically replaces the existing classical `applyMove`). All gated on chess-spectral 1.5 actually shipping.
+**QM-API design call**: 7 read-only methods on the underlying state (the unitary `applyMoveQm` is the only mutation, and it semantically replaces the existing classical `applyMove`). All available in chess-spectral 1.5.0 (PyPI). The `chess_spectral.qm_4d` kinematics module exposes `H_rook_4`, `H_bishop_4`, `H_queen_4`, `H_king_4`, `H_knight_4` Hermitian observables; pawn observables defer to v1.7+ (pseudo-Hermitian η-metric, ADR-005).
+
+**Wire format** (per upstream README §17.1 contract): every ψ return is a 1-D Float32 array of length `2 × 45056 = 90112`, where `psi[2k]` is `Re(ψ_k)` and `psi[2k+1]` is `Im(ψ_k)`. JS-side: `new Float32Array(transferableBuffer)` for shader uploads; complex multiply via `(re*re' - im*im', re*im' + im*re')` per pair.
 
 ---
 
@@ -108,13 +120,18 @@ The user said *"we always forget something"*. Here's the list of things that are
 | **No `loadState(json)` method** — the bridge can't be restored to an arbitrary position. M11.6 export round-trip is one-way. | Add `loadFen4(fen4String)` and/or `loadJsonlFixture(piecesObj)`. Lets users paste an exported game back in. |
 | **Save/restore in localStorage** — currently no autosave. Refresh = lose the game. | Out of scope for chess-spectral; chess4D-OC adds. |
 
-### Dev/debug methods worth exposing
+### Dev/debug methods — **HONORED in chess-spectral 1.5 §17.5**
 
-| Gap | What to do |
-|---|---|
-| **`getEncoderShape()`** — channel names + dim per channel | Useful for the visualizer to validate at startup that chess-spectral version matches expected channel set. |
-| **`listAvailableEvalTypes()`** | Once engine ships, lets UI populate the eval-type dropdown dynamically. |
-| **`getVersion()`** | We have `getStatus` but no clean version string. |
+| Bridge method | Upstream symbol | Status |
+|---|---|---|
+| `getEncoderShape()` | `qm_4d_bridge.get_encoder_shape` | **Wired in M11.25** ✅ |
+| `getVersion()` | `qm_4d_bridge.get_version` | **Wired in M11.25** ✅ |
+| `getFen4State()` | `qm_4d_bridge.get_fen4_state` | M11.26 |
+| `loadFen4(fen4)` | `qm_4d_bridge.load_fen4` | M11.26 |
+| `loadJsonlFixture(obj)` | `qm_4d_bridge.load_jsonl_fixture` | M11.26 |
+| `hasLegalMoves(team)` | `qm_4d_bridge.has_legal_moves` | M11.26 — **unblocks async cutover** |
+| `getDrawStatus()` | `chess_spectral_4d.bridge.get_draw_status` | M11.26 — threefold/50-move/insufficient/stalemate priority |
+| `listAvailableEvalTypes()` | (chess-spectral 1.6 — pending) | After 1.6 ships |
 
 ### FEN4 round-trip
 
@@ -143,17 +160,26 @@ After that transition, the JS-side Piece classes can be deleted.
 
 ---
 
-## Concrete asks for chess-spectral 1.5/1.6
+## Concrete asks for chess-spectral 1.5/1.6 — **delivery scorecard**
 
-If you're scoping the Python work, these are the bridge methods to land:
+**chess-spectral 1.5 (QM + dev/debug surface)** — **delivered 2026-04-29 ✅**
 
-**chess-spectral 1.5 (QM extension):**
-1. `getQmState`, `getQmDensity`, `applyMoveQm`, `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation`
+- §17.1 QM extension (7): `get_qm_state`, `get_qm_density`, `apply_move_qm`, `apply_move_qm_full`, `measure_at`, `get_density_matrix_of`, `get_probability_current`, `get_qm_expectation` — all in `chess_spectral.qm_4d_bridge`
+- §17.5 dev/debug (6): `get_version`, `get_encoder_shape`, `get_fen4_state`, `load_fen4`, `load_jsonl_fixture`, `has_legal_moves` — all in `chess_spectral.qm_4d_bridge`
+- New `chess_spectral_4d.bridge` module: `load_state(fen4)`, `get_draw_status(state, has_legal_moves)` — priority threefold > 50-move > insufficient > stalemate
 
-**chess-spectral 1.6 (engine module):**
-2. `getBestMove`, `evaluatePosition`, `runTournament`
+**chess-spectral 1.6 (engine module)** — **outstanding ⏳**
 
-**Either version, low-effort additions worth bundling:**
-3. `getDrawStatus`, `loadFen4`, `serializeFen4`, `getEncoderShape`, `listAvailableEvalTypes`, `getVersion`
+- `get_best_move(opts)` — Python-side iterative-deepening alpha-beta search
+- `evaluate_position(opts)` — channel-energy weighted sum + classical material
+- `run_tournament(opts)` — self-play harness for weight tuning
 
-That's **9 + 6 = 15 new methods** total across both releases. The chess4D-OC frontend has the slot infrastructure for all of them already (the bridge `chained()` and `call()` plumbing handles the worker-side dispatch transparently).
+**Frontend wire-up plan** (the chess4D-OC bridge `chained()` and `call()` plumbing handles dispatch transparently — adding a method to the worker `handlers` object + a one-liner on the `bridge` object is all that's needed per method):
+
+| Milestone | Methods wired | Risk |
+|---|---|---|
+| M11.25 ✅ | `getVersion`, `getEncoderShape` | Low — pure read-only, no state translation |
+| M11.26 | FEN4 round-trip + `getFen4State`, `loadFen4`, `getDrawStatus`, `hasLegalMoves` | Med — `hasLegalMoves` is the async-cutover blocker for `GameBoard.hasLegalMoves` |
+| M11.27 | `getQmState`, `getQmDensity` | Low — read-only QM kinematics; Float32Array transferables |
+| M11.28+ | `applyMoveQmFull`, `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation` | Med — first mutation method requires understanding of unitary-vs-classical state authority |
+| M14.x (paused for review per autonomy plan) | Visualization layers consuming the QM API | High — UX work, needs human eyes |

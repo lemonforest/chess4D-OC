@@ -1,8 +1,17 @@
 // spectral_worker.js — Pyodide host running in a Web Worker.
 //
-// Boots Pyodide from CDN, micropip-installs chess-spectral and
+// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.5.0) and
 // python-chess4d-oana-chiru (>=0.4.0), and exposes a small RPC surface to
 // the main thread via spectral_bridge.js.
+//
+// chess-spectral 1.5.0 (released 2026-04-29) ships:
+//   - chess_spectral.qm_4d           — kinematic QM (states, observables, B_4)
+//   - chess_spectral.qm_4d_dynamics  — unitary moves, evolve_under_h0
+//   - chess_spectral.qm_4d_bridge    — Pyodide-shaped §17.1 + §17.5 surface
+//   - chess_spectral_4d              — 4D game-state package, with .bridge module
+// All §17.5 dev/debug methods (get_version, get_encoder_shape, get_fen4_state,
+// load_fen4, has_legal_moves, etc.) plus §17.1 QM methods now available.
+// See docs/bridge_api.md for the wire-up plan.
 //
 // Protocol: { id, method, args } -> { id, ok, result } | { id, ok:false, error }
 // See ~/.claude/projects/D--GitHub-chess4D-OC/memory/api-contracts.md.
@@ -41,8 +50,11 @@ async function ensureInit() {
     const micropip = pyodide.pyimport('micropip');
 
     // keep_going=True so a failure on one package doesn't block the others.
+    // chess-spectral 1.5.0 (Apr 2026) adds the qm_4d / qm_4d_dynamics /
+    // qm_4d_bridge modules for §17.1 QM-extension surface and the §17.5
+    // dev/debug surface (get_version, get_encoder_shape, etc.).
     await micropip.install(
-      ['chess-spectral>=1.3.1', 'python-chess4d-oana-chiru>=0.4.0'],
+      ['chess-spectral>=1.5.0', 'python-chess4d-oana-chiru>=0.4.0'],
       true /* keep_going */
     );
 
@@ -619,6 +631,61 @@ _do_info()
 `
       )
       .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.5 §17.5 dev/debug surface (M11.25)
+  // ───────────────────────────────────────────────────────────────────
+
+  // Clean version string + package metadata. Lets the UI display
+  // "chess-spectral 1.5.0" without having to grep micropip output.
+  // Falls back to importlib.metadata if qm_4d_bridge isn't importable
+  // (defensive — should always be present in 1.5+ but a future split
+  // could move it).
+  getVersion() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_version():
+    try:
+        from chess_spectral.qm_4d_bridge import get_version
+        r = get_version()
+        # qm_4d_bridge contracts return Python dicts already shaped for JSON
+        return r
+    except Exception:
+        try:
+            from importlib.metadata import version as _v
+            return {'ok': True, 'version': _v('chess-spectral'), 'source': 'importlib.metadata'}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+_do_version()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // 11-channel layout of the 45,056-dim 4D encoder. Returns
+  //   { ok, totalDim: 45056, channels: [{ name, offset, dim }, ...] }
+  // Useful for the JS overlay modules to validate at startup that the
+  // chess-spectral version matches our expected channel set, and to
+  // populate channel-toggle dropdowns dynamically rather than hard-
+  // coding the names. Pure read-only — no state dependence.
+  getEncoderShape() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_encoder_shape():
+    try:
+        from chess_spectral.qm_4d_bridge import get_encoder_shape
+        return get_encoder_shape()
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+_do_encoder_shape()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 };
 
