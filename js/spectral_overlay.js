@@ -68,22 +68,54 @@
       lookup.set(`${w.x.toFixed(2)},${w.y.toFixed(2)},${w.z.toFixed(2)}`, c.intensity);
     }
 
+    // Intensity stats — print once per applyIntensities call so users can
+    // see (in dev tools) whether the encoder is producing per-dest variation
+    // or the chosen channel is near-constant for this position.
+    const finite = values.filter((v) => Number.isFinite(v));
+    if (finite.length > 0) {
+      const range = hi - lo;
+      const isFlat = Math.abs(range) < 1e-9;
+      console.log(
+        `[m5/overlay] intensities: n=${finite.length} ` +
+          `min=${lo.toExponential(3)} max=${hi.toExponential(3)} ` +
+          `range=${isFlat ? '(FLAT — try STD4_X/Y/Z/W for per-cell variation)' : range.toExponential(3)}`
+      );
+    }
+
     for (const mesh of meshes) {
       if (!mesh.position || !mesh.material) continue;
       const key = `${mesh.position.x.toFixed(2)},${mesh.position.y.toFixed(2)},${mesh.position.z.toFixed(2)}`;
       const intensity = lookup.get(key);
       if (intensity == null || !Number.isFinite(intensity)) continue;
-      const norm = (intensity - lo) / (hi - lo);
-      const opacity = 0.25 + norm * 0.7;
-      // Iterate over potentially nested materials (OBJ groups can have arrays).
+      const norm = Math.max(0, Math.min(1, (intensity - lo) / (hi - lo)));
+      // Wider opacity range than M5 so even modest intensity changes are visible.
+      const opacity = 0.20 + norm * 0.78;
+      // Color ramp: low = cool blue (cold cell), mid = green-cyan, high = warm
+      // amber-red (hot cell). The ramp is computed in (R, G, B) ∈ [0, 1].
+      // Picked by hand to give a clean dark-blue → cyan → green → yellow → red
+      // viridis-ish path that reads on the dark background.
+      let r, g, b;
+      if (norm < 0.25) {
+        const t = norm / 0.25;
+        r = 0.10;            g = 0.18 + t * 0.42; b = 0.55 + t * 0.45;
+      } else if (norm < 0.5) {
+        const t = (norm - 0.25) / 0.25;
+        r = 0.10 + t * 0.05; g = 0.60 + t * 0.30; b = 1.00 - t * 0.50;
+      } else if (norm < 0.75) {
+        const t = (norm - 0.5) / 0.25;
+        r = 0.15 + t * 0.65; g = 0.90 - t * 0.10; b = 0.50 - t * 0.40;
+      } else {
+        const t = (norm - 0.75) / 0.25;
+        r = 0.80 + t * 0.20; g = 0.80 - t * 0.55; b = 0.10;
+      }
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const mat of mats) {
         if (!mat) continue;
+        if (mat.color && mat.color.setRGB) mat.color.setRGB(r, g, b);
         mat.transparent = true;
         mat.opacity = opacity;
-        if (mat.emissive && mat.emissiveIntensity !== undefined) {
-          mat.emissiveIntensity = norm * 0.6;
-        }
+        if (mat.emissive && mat.emissive.setRGB) mat.emissive.setRGB(r * 0.6, g * 0.6, b * 0.6);
+        if (mat.emissiveIntensity !== undefined) mat.emissiveIntensity = 0.3 + norm * 0.7;
         if (mat.needsUpdate !== undefined) mat.needsUpdate = true;
       }
     }
