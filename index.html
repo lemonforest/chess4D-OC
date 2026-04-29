@@ -63,6 +63,8 @@
         'js/comprehensiveTutorial.js',
         'js/main.js?v=2',
         'js/spectral_overlay.js',
+        'js/spectral_heatmap.js',
+        'js/spectral_filaments.js',
       ];
 
       function loadScript(src) {
@@ -224,6 +226,38 @@
                     </select>
                 </div>
                 <p class="spectral-hint" id="spectral-hint">Engine loading&hellip;</p>
+
+                <!-- M10: full-board signature heat map + streamline filaments.
+                     Refreshes only on real moves (cached encoding from M6),
+                     so the per-frame cost is two extra draw calls and zero
+                     CPU work between moves. -->
+                <div class="spectral-control spectral-m10">
+                    <label for="board-signature">Board signature:</label>
+                    <select id="board-signature" aria-label="Board-wide signature heat map channel">
+                        <option value="off" selected>Off</option>
+                        <optgroup label="Fast (linear / per-cell varies)">
+                            <option value="STD4_X">STD4_X</option>
+                            <option value="STD4_Y">STD4_Y</option>
+                            <option value="STD4_Z">STD4_Z</option>
+                            <option value="STD4_W">STD4_W</option>
+                            <option value="A1">A1 (orbit — may be flat)</option>
+                        </optgroup>
+                        <optgroup label="Nonlinear">
+                            <option value="FIB_SYM_1">FIB_SYM_1</option>
+                            <option value="FIB_SYM_2">FIB_SYM_2</option>
+                            <option value="FIB_SYM_3">FIB_SYM_3</option>
+                            <option value="FA_PAWN_W">FA_PAWN_W</option>
+                            <option value="FA_PAWN_Y">FA_PAWN_Y</option>
+                            <option value="FD_DIAG">FD_DIAG</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="spectral-control spectral-m10">
+                    <label>
+                        <input type="checkbox" id="board-filaments">
+                        Streamline filaments (STD4 vector field)
+                    </label>
+                </div>
 
                 <!-- M9 help popover: hidden by default, toggled by the ? button. -->
                 <div class="spectral-help" id="spectral-help" hidden>
@@ -545,6 +579,43 @@
           }
         });
       })();
+    </script>
+
+    <!-- M10: board-signature heat map + filament UI bindings. Wait for
+         chess4d-app-ready so SpectralHeatmap / SpectralFilaments globals
+         exist (they're loaded by the dynamic-script chain in head). -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var sigSelect = document.getElementById('board-signature');
+        if (sigSelect) {
+          // Reflect URL flag into the dropdown if user landed with ?heatmap=...
+          try {
+            var hf = new URLSearchParams(location.search).get('heatmap');
+            if (hf && hf !== 'off') sigSelect.value = hf;
+          } catch (_) {}
+          sigSelect.addEventListener('change', function () {
+            if (!window.SpectralHeatmap) return;
+            var v = sigSelect.value;
+            if (v === 'off') {
+              window.SpectralHeatmap.setEnabled(false);
+            } else {
+              window.SpectralHeatmap.setChannel(v);
+              window.SpectralHeatmap.setEnabled(true);
+            }
+          });
+        }
+        var filCheck = document.getElementById('board-filaments');
+        if (filCheck) {
+          try {
+            var ff = new URLSearchParams(location.search).get('filaments');
+            if (ff === '1' || ff === 'on') filCheck.checked = true;
+          } catch (_) {}
+          filCheck.addEventListener('change', function () {
+            if (!window.SpectralFilaments) return;
+            window.SpectralFilaments.setEnabled(filCheck.checked);
+          });
+        }
+      });
     </script>
 </body>
 </html>

@@ -97,12 +97,38 @@ GameBoard.prototype = {
 				).then((res) => {
 					if (!res || !res.ok) {
 						console.warn('[m4a] bridge.applyMove rejected', res);
+					} else {
+						// M10: refresh board overlays after Python state advances.
+						// (No-ops when overlays are disabled.)
+						if (window.SpectralHeatmap) window.SpectralHeatmap.refresh();
+						if (window.SpectralFilaments) window.SpectralFilaments.refresh();
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
 				});
 			} catch (err) {
 				console.warn('[m4a] bridge.applyMove threw synchronously', err);
+			}
+		} else if (typeof window !== 'undefined') {
+			// M10: even when ?legalityEngine=js (Python isn't tracking state),
+			// the heat map/filaments still need a refresh trigger. Apply the
+			// JS move to the Python state too (fire-and-forget) so the
+			// overlay reflects what just happened on screen. Without this
+			// guard, overlays stay frozen at initial position.
+			if (window.SpectralBridge && (window.SpectralHeatmap || window.SpectralFilaments)) {
+				try {
+					window.SpectralBridge.applyMove(
+						{x: x0, y: y0, z: z0, w: w0},
+						{x: x1, y: y1, z: z1, w: w1}
+					).then((res) => {
+						if (res && res.ok) {
+							if (window.SpectralHeatmap) window.SpectralHeatmap.refresh();
+							if (window.SpectralFilaments) window.SpectralFilaments.refresh();
+						}
+					}).catch((err) => {
+						console.warn('[m10] bridge.applyMove error', err);
+					});
+				} catch (err) { /* ignore */ }
 			}
 		}
 

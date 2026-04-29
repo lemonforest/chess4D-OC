@@ -173,6 +173,12 @@
     // pattern (one in-flight + one queued, replace queued on new hover).
     previewEncoding: (origin) => previewCoalesced(origin),
 
+    // M10 full-board encoding for the heat-map / filament overlays.
+    // Refreshes only when the move-history advances (cheap slice off the
+    // cached 45,056-dim vector).
+    getBoardEncoding: (channels) =>
+      applyChain.then(() => call('getBoardEncoding', { channels: channels || ['A1'] })),
+
     // M3.5 parity helpers — kept for the parity harness. listInitialPieces
     // is still the cleanest way to enumerate the canonical starting position.
     listInitialPieces: () => call('listInitialPieces'),

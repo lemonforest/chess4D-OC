@@ -51,6 +51,7 @@ playwright-report/
 
 # Local-only Pyodide-package inspection scratch (not part of the app)
 tmp_inspect/
+tmp_inspect_chess4d/
 
 # Misc
 *.bak
