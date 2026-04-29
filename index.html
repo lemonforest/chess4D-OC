@@ -473,6 +473,29 @@
                 </div>
             </section>
 
+            <!-- Bot Strategy (M13.2) — pick a different decision matrix
+                 per side for testing. Live-updates via Bot.setStrategy
+                 on change. Hidden if there are no bots in the game (no
+                 effect in Two Players mode). -->
+            <section class="card bot-strategy-card">
+                <h3>Bot Strategy</h3>
+                <div class="spectral-control">
+                    <label for="bot-strategy-white">White:</label>
+                    <select id="bot-strategy-white" aria-label="White bot strategy"
+                            title="Pick the decision matrix for the WHITE bot. Switching live affects the next move.">
+                    </select>
+                </div>
+                <div class="spectral-control">
+                    <label for="bot-strategy-black">Black:</label>
+                    <select id="bot-strategy-black" aria-label="Black bot strategy"
+                            title="Pick the decision matrix for the BLACK bot. Switching live affects the next move.">
+                    </select>
+                </div>
+                <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
+                    Different strategies = different play styles. Try ``smart`` vs ``aggressive`` for a real game; try ``random`` as a control.
+                </p>
+            </section>
+
             <!-- Action Buttons -->
             <section class="card actions-card">
                 <h3>Actions</h3>
@@ -1513,6 +1536,60 @@
         box.addEventListener('change', function () {
           apply();
           try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
+    <!-- M13.2: bot-strategy dropdowns. Read available strategies from
+         Bot.strategies (registered in Bot.js), populate the two <select>
+         elements, sync to Bot.activeStrategy on change, persist via
+         localStorage. URL flags ?botWhite, ?botBlack already populated
+         the registry at boot time — we just reflect that into the UI. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        if (typeof Bot === 'undefined' || !Bot.strategies) return;
+        var whiteSel = document.getElementById('bot-strategy-white');
+        var blackSel = document.getElementById('bot-strategy-black');
+        if (!whiteSel || !blackSel) return;
+        var WK = 'chess4d-oc.bot-strategy.white';
+        var BK = 'chess4d-oc.bot-strategy.black';
+        // Populate options.
+        function populate(sel) {
+          sel.innerHTML = '';
+          Object.keys(Bot.strategies).forEach(function (name) {
+            var opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = Bot.strategies[name].label || name;
+            sel.appendChild(opt);
+          });
+        }
+        populate(whiteSel);
+        populate(blackSel);
+        // Resolve initial values: URL flag (already pushed into Bot
+        // registry) overrides localStorage. If neither, default to v0.
+        function resolveInitial(team, key) {
+          var current = Bot.getActiveStrategyName(team);
+          // If the URL flag changed it from 'v0' default, use that.
+          if (current && current !== 'v0' && Bot.strategies[current]) return current;
+          // Else, restore localStorage.
+          try {
+            var v = localStorage.getItem(key);
+            if (v && Bot.strategies[v]) {
+              Bot.setStrategy(team, v);
+              return v;
+            }
+          } catch (_) {}
+          return 'v0';
+        }
+        whiteSel.value = resolveInitial(0, WK);
+        blackSel.value = resolveInitial(1, BK);
+        whiteSel.addEventListener('change', function () {
+          Bot.setStrategy(0, whiteSel.value);
+          try { localStorage.setItem(WK, whiteSel.value); } catch (_) {}
+        });
+        blackSel.addEventListener('change', function () {
+          Bot.setStrategy(1, blackSel.value);
+          try { localStorage.setItem(BK, blackSel.value); } catch (_) {}
         });
       });
     </script>
