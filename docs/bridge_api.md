@@ -14,7 +14,7 @@ The user said: *"we'll need to see what we opened up api wise and what we find w
 
 ---
 
-## Currently exposed (15 methods, 13 pre-1.5 + 2 from M11.25)
+## Currently exposed (17 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26)
 
 All methods return `Promise`s. The bridge serializes mutations through `applyChain` so move-applying methods don't race.
 
@@ -35,10 +35,12 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `legalMovesAtInitial(origin)` | `{x,y,z,w}` | `{ ok, moves: [...] }` | M3.5 parity harness | Doesn't depend on current state |
 | `getVersion()` *(M11.25)* | — | `{ ok, version, source? }` | (debug panel — wire-up pending) | Calls `chess_spectral.qm_4d_bridge.get_version` |
 | `getEncoderShape()` *(M11.25)* | — | `{ ok, totalDim, channels: [{name,offset,dim}] }` | (overlay modules — wire-up pending) | 45,056-dim, 11 channels of 4096 each |
+| `hasLegalMoves(team)` *(M11.26)* | `0\|1` | `{ ok, hasMoves: boolean }` | (M11.26.1 cutover pending) | King-first scan in Python; drop-in for `gameBoard.hasLegalMoves` |
+| `getFen4State()` *(M11.26)* | — | `{ ok, fen4 }` | (M11.6 export refactor pending) | Best-effort v1 serializer; probes upstream + hand-rolled fallback |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
-`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`.
+`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`.
 
 ---
 
@@ -126,11 +128,11 @@ The user said *"we always forget something"*. Here's the list of things that are
 |---|---|---|
 | `getEncoderShape()` | `qm_4d_bridge.get_encoder_shape` | **Wired in M11.25** ✅ |
 | `getVersion()` | `qm_4d_bridge.get_version` | **Wired in M11.25** ✅ |
-| `getFen4State()` | `qm_4d_bridge.get_fen4_state` | M11.26 |
-| `loadFen4(fen4)` | `qm_4d_bridge.load_fen4` | M11.26 |
-| `loadJsonlFixture(obj)` | `qm_4d_bridge.load_jsonl_fixture` | M11.26 |
-| `hasLegalMoves(team)` | `qm_4d_bridge.has_legal_moves` | M11.26 — **unblocks async cutover** |
-| `getDrawStatus()` | `chess_spectral_4d.bridge.get_draw_status` | M11.26 — threefold/50-move/insufficient/stalemate priority |
+| `getFen4State()` | (probed; hand-rolled fallback) | **Wired in M11.26** ✅ — upstream serializer probe path; M11.26.1 swaps to canonical once observed |
+| `hasLegalMoves(team)` | (chess4d primitives + king-first scan) | **Wired in M11.26** ✅ — does NOT use upstream `qm_4d_bridge.has_legal_moves` because it operates on chess4d.GameState directly without a state-translation hop |
+| `loadFen4(fen4)` | `qm_4d_bridge.load_fen4` | M11.26.1 — needs state-authority decision |
+| `loadJsonlFixture(obj)` | `qm_4d_bridge.load_jsonl_fixture` | M11.26.1 |
+| `getDrawStatus()` | `chess_spectral_4d.bridge.get_draw_status` | M11.26.1 — threefold/50-move/insufficient/stalemate priority; needs FEN4 round-trip to chess_spectral_4d.GameState4D |
 | `listAvailableEvalTypes()` | (chess-spectral 1.6 — pending) | After 1.6 ships |
 
 ### FEN4 round-trip
