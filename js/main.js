@@ -588,13 +588,20 @@ async function setupThreeJS() {
     // Create scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0e27); // Dark blue background
-    // PERFORMANCE: Slightly reduce fog distance (minimal visual impact, better culling)
-    scene.fog = new THREE.Fog(0x0a0e27, 800, 2500); // Reduced from 1000-3000 to 800-2500
+    // M11: pull fog way back so the M10 heat-map cloud + filaments at the
+    // far end of the 64-board stack don't get washed out. The M7c shared-
+    // material + render-on-demand work means we can afford the extra
+    // fragments. Fog stays on (it still hides true infinity), but the
+    // near plane is now well past the far end of the visible stack
+    // (~6500 world units to the last board) so nothing on the lattice is
+    // dimmed by atmosphere.
+    scene.fog = new THREE.Fog(0x0a0e27, 6000, 14000);
 
     // Create camera
     const aspect = window.innerWidth / window.innerHeight;
-    // PERFORMANCE: Slightly reduce FOV and far plane (minimal visual impact)
-    camera = new THREE.PerspectiveCamera(58, aspect, 1, 4000); // FOV: 60→58, far: 10000→4000
+    // M11: bump the far plane to match the relaxed fog range; otherwise
+    // the far end of the lattice gets clipped before the fog reaches it.
+    camera = new THREE.PerspectiveCamera(58, aspect, 1, 16000);
 
     // Initial camera position (will be adjusted after board is created)
     camera.position.set(0, 1500, 0);
@@ -906,6 +913,10 @@ function initializeGame() {
             
             // Create game board (n=8 for 8x8x8x8 = 4096 positions)
             gameBoard = new GameBoard(8, BoardGraphics);
+            // M11: expose for the hide-chess-boards toggle in index.html.
+            // Top-level `let` doesn't become a window property in script
+            // mode, so we set it explicitly. Same pattern as moveManager.
+            if (typeof window !== 'undefined') window.gameBoard = gameBoard;
             
             // Wait a bit for board to render
             setTimeout(() => {
