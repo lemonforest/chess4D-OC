@@ -237,6 +237,25 @@
                 </div>
                 <p class="spectral-hint" id="spectral-hint">Engine loading&hellip;</p>
 
+                <!-- M11.13: presets dropdown — common viz combinations as
+                     a single click. Each preset flips multiple downstream
+                     toggles via dispatchEvent so the existing change
+                     handlers fire normally. Picking 'Custom' is a no-op. -->
+                <div class="spectral-control spectral-m10">
+                    <label for="viz-preset">Preset:</label>
+                    <select id="viz-preset" aria-label="Visualization preset"
+                            title="Pick a common visualization combo. Selecting a preset toggles the relevant checkboxes; 'Custom' just remembers the current state.">
+                        <option value="custom" selected>Custom (current)</option>
+                        <option value="off">Off (clear all layers)</option>
+                        <option value="cloud">Cloud (volumetric A1)</option>
+                        <option value="topology">Topology (Morse-Smale filaments)</option>
+                        <option value="tint">Tinted boards (channel-painted cells)</option>
+                        <option value="shells">Smooth shells (hide boards + iso)</option>
+                        <option value="dotplot">Dot plot (discrete spheres)</option>
+                        <option value="full">Full multi-layer (cloud + topology + maxima)</option>
+                    </select>
+                </div>
+
                 <!-- M10: full-board signature heat map + streamline filaments.
                      Refreshes only on real moves (cached encoding from M6),
                      so the per-frame cost is two extra draw calls and zero
@@ -1790,6 +1809,119 @@
               ' (' + Object.keys(pieces).length + ' pieces, ' +
               moves.length + ' moves)'
           );
+        });
+      });
+    </script>
+
+    <!-- M11.13: visualization presets. Selecting a preset flips multiple
+         downstream controls (channel dropdown + checkboxes) by setting
+         their .value/.checked and dispatching change events so the
+         existing per-control handlers fire normally. 'Custom' is a no-op
+         (just records that the user customized the state). -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var sel = document.getElementById('viz-preset');
+        if (!sel) return;
+        // Helper: flip a checkbox and fire change.
+        function setCheck(id, v) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (el.checked === v) return;
+          el.checked = v;
+          el.dispatchEvent(new Event('change'));
+        }
+        // Helper: set a select value and fire change.
+        function setSel(id, v) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (el.value === v) return;
+          el.value = v;
+          el.dispatchEvent(new Event('change'));
+        }
+        // Each preset is a dispatcher of control settings. Preset values
+        // are intentionally minimal — they toggle the SHIPPED layer
+        // checkboxes; statistics options (log1p, signed, threshold,
+        // clip, slice) and bot strategies are NOT touched (they're
+        // user preferences orthogonal to the layer choice).
+        var PRESETS = {
+          off: function () {
+            setSel('board-signature', 'off');
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+            setCheck('board-commutator', false);
+          },
+          cloud: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+          },
+          topology: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', true);   // auto-on by topology too, but explicit
+            setCheck('board-topology', true);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', true);    // peaks pair naturally with MS skeleton
+            setCheck('hide-boards', false);
+          },
+          tint: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', true);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+          },
+          shells: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', true);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', true);   // shells read better without boards
+          },
+          dotplot: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', true);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+          },
+          full: function () {
+            setSel('board-signature', 'A1');
+            setCheck('board-filaments', true);
+            setCheck('board-topology', true);
+            setCheck('board-tint', false);    // tint vs cloud is mutually exclusive in spirit
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', true);
+            setCheck('hide-boards', true);
+          },
+        };
+        sel.addEventListener('change', function () {
+          var fn = PRESETS[sel.value];
+          if (!fn) return; // 'custom' / unknown
+          console.log('[m11.13/preset] applying preset:', sel.value);
+          try { fn(); }
+          catch (err) { console.warn('[m11.13/preset] error:', err); }
         });
       });
     </script>
