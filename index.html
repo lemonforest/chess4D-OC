@@ -259,7 +259,13 @@
                 <div class="spectral-control spectral-m10">
                     <label>
                         <input type="checkbox" id="board-filaments">
-                        Streamline filaments (STD4 vector field)
+                        Streamline filaments (follow signature gradient)
+                    </label>
+                </div>
+                <div class="spectral-control spectral-m10">
+                    <label>
+                        <input type="checkbox" id="hide-boards">
+                        Hide chess boards (let cloud breathe)
                     </label>
                 </div>
                 <div class="spectral-control spectral-m10 spectral-filament-params" id="filament-params" hidden>
@@ -573,11 +579,26 @@
                         <button class="btn-nav-small" id="tutorial-next">►</button>
                     </div>
 
-                    <!-- Piece Viewer -->
-                    <div class="tutorial-viewer">
-                        <canvas id="tutorial-piece-canvas"></canvas>
-                        <div class="tutorial-controls">
-                            <span class="tutorial-hint">Drag to rotate</span>
+                    <!-- Piece Viewer (separately collapsible from the card body
+                         so the description + examples stay visible at narrow
+                         aspect ratios where the canvas would otherwise push
+                         them off-screen). -->
+                    <div class="tutorial-viewer-header">
+                        <span class="tutorial-viewer-label">3D preview</span>
+                        <button type="button" class="card-collapse-btn tutorial-viewer-toggle"
+                                id="tutorial-viewer-toggle"
+                                aria-expanded="true" aria-controls="tutorial-viewer-body"
+                                aria-label="Collapse 3D piece preview"
+                                title="Collapse / expand 3D piece preview">
+                            <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                        </button>
+                    </div>
+                    <div class="tutorial-viewer-body" id="tutorial-viewer-body">
+                        <div class="tutorial-viewer">
+                            <canvas id="tutorial-piece-canvas"></canvas>
+                            <div class="tutorial-controls">
+                                <span class="tutorial-hint">Drag to rotate</span>
+                            </div>
                         </div>
                     </div>
 
@@ -674,21 +695,28 @@
     <script>
       window.addEventListener('chess4d-app-ready', function () {
         var sigSelect = document.getElementById('board-signature');
+        // M11: filaments now follow the heatmap channel's gradient. We push
+        // the channel into SpectralFilaments so the two visualizations
+        // share a single source of truth (the dropdown).
+        function pushChannelToFilaments(channel) {
+          if (!window.SpectralFilaments || typeof window.SpectralFilaments.setChannel !== 'function') return;
+          window.SpectralFilaments.setChannel(channel);
+        }
         if (sigSelect) {
           try {
             var hf = new URLSearchParams(location.search).get('heatmap');
             if (hf && hf !== 'off') sigSelect.value = hf;
           } catch (_) {}
           sigSelect.addEventListener('change', function () {
-            if (!window.SpectralHeatmap) return;
             var v = sigSelect.value;
-            if (v === 'off') {
-              window.SpectralHeatmap.setEnabled(false);
-            } else {
-              window.SpectralHeatmap.setChannel(v);
-              window.SpectralHeatmap.setEnabled(true);
+            if (window.SpectralHeatmap) {
+              if (v === 'off') window.SpectralHeatmap.setEnabled(false);
+              else { window.SpectralHeatmap.setChannel(v); window.SpectralHeatmap.setEnabled(true); }
             }
+            pushChannelToFilaments(v);
           });
+          // Initial sync — covers the ?heatmap= URL param case.
+          pushChannelToFilaments(sigSelect.value);
         }
         var filCheck = document.getElementById('board-filaments');
         var filParams = document.getElementById('filament-params');
@@ -734,6 +762,62 @@
           filStepSlider.addEventListener('change', applyFilParams);
         }
       });
+    </script>
+
+    <!-- M11: hide-chess-boards toggle. The volumetric heat-map cloud
+         (M11) drapes over the boards and the boards' opaque squares
+         occlude the cloud underneath. This checkbox toggles the
+         visibility of the `boardContainer` Object3D so the cloud is
+         unobstructed. Pieces stay visible (different container). -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('hide-boards');
+        if (!box) return;
+        function apply() {
+          // GameBoard exposes its graphics on a global; we only need the
+          // boardContainer Object3D. Guard heavily — the engine boots async.
+          var gb = window.gameBoard;
+          if (!gb || !gb.graphics || !gb.graphics.boardContainer) return;
+          gb.graphics.boardContainer.visible = !box.checked;
+          window.__GAME_DIRTY__ = true;
+        }
+        box.addEventListener('change', apply);
+        // The gameBoard global is populated during setupThreeJS, which the
+        // chess4d-app-ready event fires after. apply() is safe to call now.
+        apply();
+      });
+    </script>
+
+    <!-- M11: piece-preview canvas collapse. Lives inside the 4D Chess
+         Pieces card. Independent from the card-level collapse — collapsing
+         only the 3D viewer keeps the description + movement examples
+         visible at narrow aspect ratios where the canvas otherwise
+         pushes them off-screen. -->
+    <script>
+      (function () {
+        var btn  = document.getElementById('tutorial-viewer-toggle');
+        var body = document.getElementById('tutorial-viewer-body');
+        if (!btn || !body) return;
+        var KEY = 'chess4d-oc.tutorial-viewer-collapsed';
+        function setCollapsed(collapsed) {
+          if (collapsed) {
+            body.classList.add('card-body--collapsed');
+            btn.setAttribute('aria-expanded', 'false');
+          } else {
+            body.classList.remove('card-body--collapsed');
+            btn.setAttribute('aria-expanded', 'true');
+          }
+          try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (_) {}
+        }
+        var persisted = null;
+        try { persisted = localStorage.getItem(KEY); } catch (_) {}
+        // Default expanded; user-collapsed sticks across sessions.
+        setCollapsed(persisted === '1');
+        btn.addEventListener('click', function () {
+          var nowCollapsed = !body.classList.contains('card-body--collapsed');
+          setCollapsed(nowCollapsed);
+        });
+      })();
     </script>
 
     <!-- Right-panel collapsible cards (4D Navigation, 4D Chess Pieces).
