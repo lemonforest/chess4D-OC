@@ -449,58 +449,81 @@
                      the M11.x layers (cloud / filaments / topology /
                      slice / threshold / clip / align). -->
                 <div class="spectral-help" id="spectral-help" hidden>
-                    <p><strong>What is this?</strong> A four-layer visualization of the chess-spectral encoding of the position. Each layer surfaces different structure; toggle them independently to dissect the field.</p>
+                    <p><strong>What is this?</strong> A multi-layer visualization of the chess-spectral encoding of the position. Pick a channel; toggle layers independently to dissect the field; combine with bot strategies to experiment with play.</p>
 
-                    <p><strong>1. Hover overlay</strong> (top dropdown, Channel)</p>
+                    <p><strong>1. Hover overlay</strong> (Channel dropdown)</p>
                     <p>When you click a piece, each legal destination is tinted by the post-move signature on the chosen channel. Bright = more positional shake-up.</p>
                     <dl class="spectral-help-list">
                         <dt>A1 <span class="spectral-help-tag">default</span></dt>
-                        <dd>Orbit projection — overall complexity. Best general intuition.</dd>
+                        <dd>Orbit projection — overall complexity.</dd>
                         <dt>STD4_X / Y / Z / W</dt>
-                        <dd>Coordinate-residuals along each of the 4 axes. Highlights moves that shift piece distribution along that one dimension. Signed.</dd>
-                        <dt>FIB_SYM_1 / 2 / 3</dt>
-                        <dd>Cross-piece interaction (rank-3 SVD basis). Slow — needs a full re-encode per destination.</dd>
-                        <dt>FA_PAWN_W / FA_PAWN_Y</dt>
-                        <dd>Pawn-antisymmetric channels, one per pawn axis (Oana &amp; Chiru §3.10 Def. 11).</dd>
-                        <dt>FD_DIAG</dt>
-                        <dd>Diagonal-antisymmetric.</dd>
+                        <dd>Coordinate-residuals along each axis. Signed; pairs naturally with the Signed-mode color ramp below.</dd>
+                        <dt>FIB_SYM_1 / 2 / 3, FA_PAWN_W / Y, FD_DIAG</dt>
+                        <dd>Slower nonlinear channels; full re-encode per destination.</dd>
                     </dl>
 
-                    <p><strong>2. Board-signature cloud</strong> (Board signature dropdown)</p>
-                    <p>Volumetric cloud over the entire 4D lattice. Per-cell color = channel intensity (viridis ramp by default), per-cell scale = magnitude. Refreshes only on real moves so it's free between moves.</p>
+                    <p><strong>2. Board-signature display modes</strong> (Board signature dropdown + checkboxes)</p>
+                    <p>The same channel renders into multiple visual layers — toggle any combination:</p>
+                    <dl class="spectral-help-list">
+                        <dt>Volumetric cloud (default when channel ≠ off)</dt>
+                        <dd>Translucent BoxGeometry per cell, scale + color modulated by intensity.</dd>
+                        <dt>Tint board cells by channel <span class="spectral-help-tag">M11.3.6</span></dt>
+                        <dd>Paints the chess-board surface itself with the channel's color. Replaces the white/black checker pattern visually. Pieces stay readable on top.</dd>
+                        <dt>Smooth isosurface shells <span class="spectral-help-tag">M11.3.1</span></dt>
+                        <dd>Marching-cubes nested shells at 50/75/90th-percentile thresholds — translucent rainbow contour-plot look.</dd>
+                        <dt>Dot plot (sphere per cell) <span class="spectral-help-tag">M11.9</span></dt>
+                        <dd>Discrete sphere markers instead of overlapping cloud. Good when you want to see EVERY cell without blending.</dd>
+                        <dt>Mark local maxima</dt>
+                        <dd>Small white spheres at each strict local max (face-neighbor test in 4D). The peaks of the field.</dd>
+                    </dl>
+
+                    <p><strong>3. Statistics options</strong></p>
                     <dl class="spectral-help-list">
                         <dt>Log scale (log1p)</dt>
-                        <dd>Compress heavy-tailed channels via <code>sign(x)·log1p(|x|)</code>. Useful for orbit channels where one cell dominates.</dd>
+                        <dd>Compress heavy-tailed channels via <code>sign(x)·log1p(|x|)</code>.</dd>
                         <dt>Signed (diverging) color mode</dt>
-                        <dd>Blue → white → red ramp; height tracks <code>|value|</code> not value, so positive AND negative lobes get visible volume. Best for STD4_X/Y/Z/W (signed channels).</dd>
-                        <dt>Mark local maxima</dt>
-                        <dd>Bright spheres at every cell whose scalar strictly exceeds its 8 face-neighbors in 4D. The field's peaks.</dd>
-                        <dt>Slice axis + value</dt>
-                        <dd>Pin one lattice axis to one of 0..7 — collapses the 4D cloud to a 3D cross-section. <code>w=4</code> picks one column of 8 boards out of the 64.</dd>
-                        <dt>Threshold</dt>
-                        <dd>Hide cells below a normalized intensity. Sweeps "percentile shells": 0 = all, 0.95 = top 5%.</dd>
-                        <dt>Clip sphere</dt>
-                        <dd>Hide cells outside a 4D ball around the lattice center, the brightest peak, or a sticky pin set via console. Soft 10% falloff. Stacks with slice + threshold.</dd>
+                        <dd>Blue → white → red ramp; height tracks <code>|value|</code>. Best for STD4_X/Y/Z/W.</dd>
                     </dl>
 
-                    <p><strong>3. Streamline filaments</strong> (Streamline filaments checkbox)</p>
+                    <p><strong>4. Filter tools — narrow what you look at</strong></p>
+                    <dl class="spectral-help-list">
+                        <dt>Slice axis + value <span class="spectral-help-tag">M11.3.8</span></dt>
+                        <dd>Pin one lattice axis to a value. Slider supports <strong>fractional values</strong> (0.5 step) — adjacent slabs blend at weight (1 − dist) for smooth scrubbing.</dd>
+                        <dt>Threshold</dt>
+                        <dd>Hide cells below a normalized intensity. Sweeps "percentile shells".</dd>
+                        <dt>Clip sphere <span class="spectral-help-tag">M11.3.2</span></dt>
+                        <dd>Hide cells outside a 4D ball around the lattice center, the brightest peak, or a console-set pin. Soft 10% falloff. Stacks AND with slice + threshold.</dd>
+                    </dl>
+
+                    <p><strong>5. Streamline filaments</strong></p>
                     <p>Field lines through the active board-signature channel. Default seeding stride-tiles the lattice; topology mode replaces it with Morse–Smale extraction.</p>
                     <dl class="spectral-help-list">
-                        <dt>Topology mode (Morse–Smale)</dt>
-                        <dd>Lines emanate from each critical point (max / min / saddle) along the Hessian eigenvectors, integrated in <code>sign(λ)·∇φ</code>. <strong>Red = ascending manifold</strong> (toward peaks). <strong>Blue = descending manifold</strong> (toward pits). The visible lines ARE the topological 1-skeleton of the field. Fixes the "lines all converge to one spot" complaint definitively.</dd>
-                        <dt>Seeds / Steps sliders</dt>
-                        <dd>(Stride mode only) — number of seed cells and integration steps per line.</dd>
+                        <dt>Topology mode (Morse–Smale) <span class="spectral-help-tag">M11.2</span></dt>
+                        <dd>Lines emanate from each critical point along Hessian eigenvectors, integrated in <code>sign(λ)·∇φ</code>. <strong>Red = ascending</strong> (toward peaks). <strong>Blue = descending</strong> (toward pits). The visible lines ARE the topological 1-skeleton.</dd>
                     </dl>
 
-                    <p><strong>4. Camera control</strong></p>
+                    <p><strong>6. Phase-operator commutator</strong> <span class="spectral-help-tag">M12</span></p>
+                    <p>Click a piece, tick "Commutator [P_A, P_B]", choose two piece types. Yellow tetrahedrons appear on cells in <code>(A∘B)(o) Δ (B∘A)(o)</code> — where the order of piece-move composition matters. Discrete analog of gauge-theory's <code>F<sub>μν</sub> = [D<sub>μ</sub>, D<sub>ν</sub>]</code>. Same piece both sides → empty (idempotent).</p>
+
+                    <p><strong>7. Camera + layout</strong></p>
                     <dl class="spectral-help-list">
-                        <dt>⤺ Align view to flow</dt>
-                        <dd>Tween the camera so its view axis lies along the dominant Hessian eigenvector at the field's most prominent critical point. Streamlines tangent to the camera foreshorten to dots; perpendicular structure spreads out. Lets you "look down the flow" instead of fighting projection clutter (Hofmann/Rieck/Sadlo 2018).</dd>
+                        <dt>⤺ Align view to flow <span class="spectral-help-tag">M11.3.3</span></dt>
+                        <dd>Tween the camera along the dominant Hessian eigenvector at the most prominent critical point.</dd>
+                        <dt>Hide chess boards / Stack height slider</dt>
+                        <dd>Boards-off + compressed-stack gives a clean "spectral cloud" view. Both reach the cloud / filaments / pieces independently.</dd>
+                        <dt>Arc layout <span class="spectral-help-tag">M11.0.1</span></dt>
+                        <dd>URL flag <code>?layout=arc</code>: line of W-columns gently bends in 120° instead of stretching linearly. Boards stay parallel; only their centers follow the arc.</dd>
                     </dl>
 
-                    <p><strong>What it all describes:</strong> the Morse–Smale complex of one chosen scalar field on the 8⁴ lattice. The cloud is the field; the spheres are its peaks; the red/blue filaments are the curves connecting peaks, pits, and saddles. Filtering tools let you isolate slices, percentile shells, or 4D balls. Together they give a verbal-only description even with aphantasia: <em>"at every red endpoint a peak; at every blue endpoint a pit; where the colors cross, a saddle; the cloud is everywhere; the slicers and clipper let me hide everything except the slab / shell / ball I'm looking at."</em></p>
+                    <p><strong>8. Bot strategies</strong> (Bot Strategy card on left panel) <span class="spectral-help-tag">M13.1, M13.2</span></p>
+                    <p>Each side picks a decision matrix independently. Try ``smart`` vs ``random`` to see how much edge alpha-beta search has; ``aggressive`` vs ``defensive`` for stylistic contrast. Live-switchable mid-game. URL flags <code>?botWhite=NAME&amp;botBlack=NAME</code>.</p>
 
-                    <p class="spectral-help-foot">Math: see <a href="https://doi.org/10.3390/appliedmath6030048" target="_blank" rel="noopener">Oana &amp; Chiru (2026)</a>, the <a href="https://pypi.org/project/chess-spectral/" target="_blank" rel="noopener">chess-spectral</a> docs, and <a href="https://bastian.rieck.me/research/EuroVis2018_4D.pdf" target="_blank" rel="noopener">Hofmann/Rieck/Sadlo (2018)</a> for the 4D topology approach.</p>
+                    <p><strong>9. Game I/O</strong> <span class="spectral-help-tag">M11.6, M11.6.1</span></p>
+                    <p>Export game (JSON) writes chess-spectral's JSONL fixture format + a moves array. Load game (JSON) reads the same back — replays each move so the live state matches.</p>
+
+                    <p><strong>What it all describes:</strong> the Morse–Smale complex of one chosen scalar field on the 8⁴ lattice. The cloud / tinted boards / shells / dots are the field; the white spheres are its peaks; the red/blue filaments are the curves connecting peaks, pits, and saddles. The yellow tetrahedrons are where two piece operators DON'T commute. Filtering and clipping let you isolate slabs, percentile shells, or 4D balls. Together they give a verbal-only description even with aphantasia: <em>"at every red endpoint a peak; at every blue endpoint a pit; where colors cross, a saddle; yellow markers show where piece-pair order matters; the cloud is everywhere; the slicers/clipper hide everything except the slab/shell/ball I'm looking at."</em></p>
+
+                    <p class="spectral-help-foot">Math: see <a href="https://doi.org/10.3390/appliedmath6030048" target="_blank" rel="noopener">Oana &amp; Chiru (2026)</a>, the <a href="https://pypi.org/project/chess-spectral/" target="_blank" rel="noopener">chess-spectral</a> docs, and <a href="https://bastian.rieck.me/research/EuroVis2018_4D.pdf" target="_blank" rel="noopener">Hofmann/Rieck/Sadlo (2018)</a> for the 4D topology approach. URL flag inventory in the README. Phase-operator math in the README's Phase-Domain Counterpart section.</p>
                 </div>
             </section>
 

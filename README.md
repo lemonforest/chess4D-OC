@@ -69,11 +69,20 @@ The fork exposes runtime flags via URL query parameters. Defaults are chosen so 
 | `?heatmapClip=` | `mode:radius`, e.g. `peak:6` | off | 4D clipping sphere. `mode` ∈ {`off`, `center`, `peak`, `click`}; `radius` ∈ 0..14. Restricts the cloud to a 4D ball around the chosen reference. |
 | `?filaments=` | `1`, `on`, off | off | Streamline filaments — field lines through the active channel. |
 | `?topology=` | `1`, `on`, off | off | Morse–Smale topology mode. Filaments seed at critical points along Hessian eigenvectors, colored by ascending (red, λ>0) / descending (blue, λ<0) manifold. Replaces stride seeding. |
+| `?dotplot=` | `1`, `on`, off | off | M11.9: render each cell as a discrete sphere (sibling to the cloud). |
+| `?boardTint=` | `1`, `on`, off | off | M11.3.6: tint the chess-board cells themselves by channel — replaces white/black checker pattern with channel colors. |
+| `?isosurfaces=` | `1`, `on`, off | off | M11.3.1: nested marching-cubes shells at 50/75/90th-percentile thresholds. Translucent rainbow contour-plot. |
+| `?layout=` | `linear`, `arc` | `linear` | M11.0.1: `arc` curves the line of W-columns through 120° of horizontal arc instead of stretching linearly along world Z. Boards stay parallel; only their centers follow the arc. VR-friendly. |
+| `?commutator=` | `1`, `on`, off | off | M12: phase-operator commutator viz. Shows cells in `(P_A∘P_B)(o) Δ (P_B∘P_A)(o)` for the selected piece's origin. Pair with `?commutatorA=`, `?commutatorB=`. |
+| `?commutatorA=`, `?commutatorB=` | `rook`, `bishop`, `queen`, `knight`, `king` | `rook`, `bishop` | M12: piece-pair selection for the commutator viz. |
 
 Combine freely. Examples:
 - `?quality=high&renderer=instanced&legalityOps=phase&debug=1` — full opt-in experimental stack
 - `?heatmap=A1&heatmapMaxima=1&filaments=1&topology=1` — full spectral viz: cloud + peaks + Morse–Smale filaments
 - `?heatmap=A1&heatmapTransform=log1p&heatmapMode=signed&heatmapSlice=w:4&heatmapClip=peak:5&heatmapThreshold=0.5` — log-compressed signed channel A1 sliced at w=4, clipped to 4D distance 5 from the peak, top-50% intensity only
+- `?layout=arc&heatmap=A1&filaments=1&topology=1` — arc layout with full Morse–Smale visualization
+- `?heatmap=A1&commutator=1&commutatorA=rook&commutatorB=bishop` — commutator viz active; click any rook or bishop to see the curvature cells
+- `?botWhite=smart&botBlack=aggressive` — A/B testing two bot strategies in Watch Bots mode
 
 ---
 
