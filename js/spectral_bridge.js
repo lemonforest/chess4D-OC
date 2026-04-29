@@ -25,6 +25,15 @@
   const renderFlag = new URLSearchParams(location.search).get('renderer');
   window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
 
+  // Spatial vs phase legality oracle:
+  //   spatial — chess4d.pieces.{type}_moves + state.push filter (default; cheap)
+  //   phase   — chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d
+  //             (Fourier-domain; same legality result, mostly here for parity
+  //             validation since it's the same oracle the M5/M6 encoder is
+  //             founded on)
+  const opsFlag = new URLSearchParams(location.search).get('legalityOps');
+  window.__LEGALITY_OPS__ = (opsFlag === 'phase') ? 'phase' : 'spatial';
+
   // M7e feature flag: ?gpu= picks the renderer backend.
   //   webgl  — Three.js WebGLRenderer (default; broadly compatible)
   //   webgpu — Three.js WebGPURenderer (r184 GA; falls back to webgl
@@ -158,6 +167,7 @@
     undo: () => chained('undo'),
     resetToInitial: () => chained('resetToInitial'),
     legalMoves: (origin) => applyChain.then(() => call('legalMoves', origin)),
+    setLegalityOps: (ops) => call('setLegalityOps', { ops }),
 
     // M5 hover spectral preview — debounced via the hover-coalescing
     // pattern (one in-flight + one queued, replace queued on new hover).
@@ -176,6 +186,14 @@
     .init()
     .then(async (info) => {
       console.log('[SpectralBridge] init complete', info);
+
+      // Push the URL-flagged legality-ops choice into the worker so
+      // _legal_moves_for dispatches correctly from the first call.
+      try {
+        await bridge.setLegalityOps(window.__LEGALITY_OPS__);
+      } catch (err) {
+        console.warn('[SpectralBridge] setLegalityOps failed:', err);
+      }
 
       let constants = null;
       let initialPos = null;
