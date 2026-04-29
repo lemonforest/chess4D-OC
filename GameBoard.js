@@ -119,7 +119,10 @@ GameBoard.prototype = {
 			// JS move to the Python state too (fire-and-forget) so the
 			// overlay reflects what just happened on screen. Without this
 			// guard, overlays stay frozen at initial position.
-			if (window.SpectralBridge && (window.SpectralHeatmap || window.SpectralFilaments)) {
+			if (window.SpectralBridge && (
+					window.SpectralHeatmap || window.SpectralFilaments ||
+					window.SpectralBoardTint || window.SpectralIsosurfaces
+				)) {
 				try {
 					window.SpectralBridge.applyMove(
 						{x: x0, y: y0, z: z0, w: w0},

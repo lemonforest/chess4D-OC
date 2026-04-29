@@ -22,7 +22,7 @@
 //   SpectralIsosurfaces.setChannel(name)
 //   SpectralIsosurfaces.setStackScale(s)   // M11.3.5 stack-height hook
 //   SpectralIsosurfaces.refresh()           // called after each applyMove
-//   SpectralIsosurfaces.getEnabled()
+//   SpectralIsosurfaces.isEnabled()
 //   SpectralIsosurfaces.getChannel()
 
 (function () {

@@ -88,7 +88,8 @@
       const intensity = lookup.get(key);
       if (intensity == null || !Number.isFinite(intensity)) continue;
       const norm = Math.max(0, Math.min(1, (intensity - lo) / (hi - lo)));
-      // Wider opacity range than M5 so even modest intensity changes are visible.
+      // Wider opacity range (0.20..0.98) than the M5 v0 default (0.40..0.80)
+      // so even modest intensity changes between destinations are visible.
       const opacity = 0.20 + norm * 0.78;
       // Color ramp: low = cool blue (cold cell), mid = green-cyan, high = warm
       // amber-red (hot cell). The ramp is computed in (R, G, B) ∈ [0, 1].

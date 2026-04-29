@@ -1,37 +1,48 @@
-// spectral_heatmap.js — M10 board signature, M11 cloud, M11.1 stats refactor.
+// spectral_heatmap.js — board-signature volumetric cloud.
+// Evolution: M10 (flat quads) → M11 (BoxGeometry cloud) → M11.1 (stats) →
+// M11.3 (slice + threshold) → M11.3.2 (clip sphere) → M11.3.5 (stack scale).
 //
-// M10 → M11: flat quads → volumetric BoxGeometry cloud (per-instance scale +
-// per-instance color, mean ± 2σ normalization).
+// What it renders: 4096 translucent boxes, one per lattice cell. Per-cell
+// color encodes channel intensity (viridis or signed RdBu); per-cell scale
+// encodes magnitude. Boxes overlap their layer neighbors so the cloud
+// reads as space-filling rather than striped sheets. One InstancedMesh =
+// one draw call. A second InstancedMesh (≤512 instances) renders local-
+// maxima markers as small spheres on top.
 //
-// M11.1 (this revision) — surface structure better:
-//   - **Robust normalization** via 5th/95th percentile clip (was mean ± 2σ).
-//     Single-cell outliers no longer dim the rest of the lattice.
-//   - **log1p transform** option (signed-aware: sign(x)·log1p(|x|)). Heavy-
-//     tailed channels like A1 / FIB_SYM_* compress dynamic range so every
-//     cell contributes visibly.
-//   - **Diverging color mode** for signed channels (STD4_X/Y/Z/W). Maps
-//     [-M, +M] onto a blue→white→red ramp; per-instance height scales
-//     with |value| not value, so positive and negative lobes both expand.
-//   - **Local-maxima overlay**: a second InstancedMesh of small spheres
-//     positioned at every cell whose scalar exceeds all 8 face-neighbors.
-//     One draw call, count clamped per refresh. Instantly surfaces the
-//     topological skeleton of the field.
+// Statistics pipeline (each refresh):
+//   1. Apply optional log1p transform (signed-aware: sign(x)·log1p(|x|))
+//   2. Robust 5/95 percentile clip; if degenerate, fall back to min/max
+//   3. Color via viridis (unipolar) OR RdBu (signed mode)
+//   4. Per-instance scale tracks intensity (or |value − neutral| for signed)
+//   5. Apply slice / threshold / clip-sphere filters → off-cells get scale 0
+//
+// Filters (all stack as AND-masks):
+//   - sliceAxis ∈ {x,y,z,w} + sliceValue ∈ 0..7 — pin one axis, hide the rest
+//   - intensityThreshold ∈ [0,1] — hide cells below normalized intensity
+//   - clipMode ∈ {center, peak, click} + clipRadius — 4D Euclidean ball
 //
 // Source for the techniques: Heatmapper2 (PMC12230736) for the height-
-// encoded + annotation overlay idioms, plus the standard scivis playbook
-// (perceptual ramps + percentile-clip + Morse-style local-max markers)
-// since the paper itself doesn't supply normalization math.
+// encoded + annotation-overlay idioms; Hofmann/Rieck/Sadlo 2018 for the
+// 4D clipping-sphere idea; standard scivis playbook for percentile-clip
+// and local-maxima markers (the paper itself doesn't supply normalization
+// math).
 //
-// API (M11.1 additions marked •):
+// API:
 //   SpectralHeatmap.init(scene, gameBoard)
 //   SpectralHeatmap.setChannel(name)
 //   SpectralHeatmap.setEnabled(bool)
 //   SpectralHeatmap.refresh()
-// • SpectralHeatmap.setTransform('linear' | 'log1p')
-// • SpectralHeatmap.setColorMode('unipolar' | 'signed')
-// • SpectralHeatmap.setShowLocalMaxima(bool)
-//   SpectralHeatmap.getChannel()    / .isEnabled() / .getTransform()
-//   SpectralHeatmap.getColorMode()  / .getShowLocalMaxima()
+//   SpectralHeatmap.setTransform('linear' | 'log1p')             — M11.1
+//   SpectralHeatmap.setColorMode('unipolar' | 'signed')          — M11.1
+//   SpectralHeatmap.setShowLocalMaxima(bool)                     — M11.1
+//   SpectralHeatmap.setSlice(axis | null, value)                 — M11.3
+//   SpectralHeatmap.setIntensityThreshold(t in [0,1])            — M11.3
+//   SpectralHeatmap.setClipSphere(mode, radius)                  — M11.3.2
+//   SpectralHeatmap.setClipPin([x,y,z,w] | null)                 — M11.3.2
+//   SpectralHeatmap.setStackScale(s)                             — M11.3.5
+//   Getters: getChannel / isEnabled / getTransform / getColorMode /
+//            getShowLocalMaxima / getSlice / getIntensityThreshold /
+//            getClipSphere / getClipPin
 
 (function () {
   'use strict';
@@ -251,12 +262,12 @@
     try {
       const res = await window.SpectralBridge.getBoardEncoding([channel]);
       if (!res || !res.ok) {
-        console.warn('[m10/heatmap] getBoardEncoding failed:', res && res.reason);
+        console.warn('[m11/heatmap] getBoardEncoding failed:', res && res.reason);
         return;
       }
       const rawArr = res.channels && res.channels[channel];
       if (!rawArr || !rawArr.length) {
-        console.warn(`[m10/heatmap] channel "${channel}" not in response`);
+        console.warn(`[m11/heatmap] channel "${channel}" not in response`);
         return;
       }
 
@@ -432,7 +443,7 @@
           (useClip ? ` clip=${clipMode}@(${clipCx.toFixed(1)},${clipCy.toFixed(1)},${clipCz.toFixed(1)},${clipCw.toFixed(1)}) R=${clipRadius.toFixed(1)}` : '')
       );
     } catch (err) {
-      console.warn('[m10/heatmap] refresh error:', err);
+      console.warn('[m11/heatmap] refresh error:', err);
     }
   }
 
