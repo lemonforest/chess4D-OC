@@ -246,6 +246,44 @@
     // Returns: { ok, psi: Float32Array(90112), basisDim: 45056, normSq }
     applyMoveQm: (origin, dest) =>
       applyChain.then(() => call('applyMoveQm', { origin, dest })),
+
+    // ───────────────────────────────────────────────────────────────
+    // chess-spectral 1.5 §17.1 QM dynamics + measurement (M11.29)
+    // ───────────────────────────────────────────────────────────────
+
+    // Born-rule projective measurement at a lattice cell. observable
+    // defaults to the channel-projection PVM if omitted; pass
+    // 'rook'|'bishop'|'queen'|'king'|'knight' to measure in the
+    // corresponding H_piece_4 eigenbasis. Returns:
+    //   { ok, sampledOutcome, postCollapsePsi }
+    // The post-collapse ψ is what M14.4 click-to-measure shows after
+    // the user clicks a cell.
+    measureAt: (coord, observable) =>
+      applyChain.then(() => call('measureAt', { coord, observable })),
+
+    // Reduced density matrix ρ_piece for one piece. Returns:
+    //   { ok, rho, purity, rank }
+    // pieceId: 0..N-1 in chess_spectral_4d's piece-listing order.
+    // Used by M14.3 entanglement viz (purity = tr(ρ²); rank > 1 ⇒
+    // piece is entangled with others).
+    getDensityMatrixOf: (pieceId) =>
+      applyChain.then(() => call('getDensityMatrixOf', { pieceId })),
+
+    // Probability-current vector field j_p(c) = Im(ψ* ∇ψ). Returns:
+    //   { ok, j: Float32Array }
+    // Shape per upstream contract — typically 4096 × 4 (4D flow vector
+    // per cell). M14.2 filament viz traces this field.
+    getProbabilityCurrent: () =>
+      applyChain.then(() => call('getProbabilityCurrent')),
+
+    // Expectation value ⟨ψ|H|ψ⟩ for a Hermitian observable. Returns:
+    //   { ok, value }
+    // observable: one of 'rook'|'bishop'|'queen'|'king'|'knight';
+    // weights (optional dict): for composing observables, e.g.
+    //   { rook: 0.4, bishop: 0.3, knight: 0.3 }.
+    // M13.4 chess-spectral 1.6 will use this for QM-flavored bot eval.
+    getQmExpectation: (observable, weights) =>
+      applyChain.then(() => call('getQmExpectation', { observable, weights })),
   };
   window.SpectralBridge = bridge;
 

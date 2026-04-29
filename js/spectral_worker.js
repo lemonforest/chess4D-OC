@@ -993,6 +993,164 @@ _do_apply_move_qm()
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.5 §17.1 QM dynamics + measurement (M11.29)
+  // ───────────────────────────────────────────────────────────────────
+
+  // Born-rule projective measurement at a lattice cell. Args:
+  //   { coord: {x,y,z,w}, observable?: string }
+  // Returns (per upstream contract): { ok, sampledOutcome, postCollapsePsi }
+  //
+  // observable defaults to the channel-projection PVM (the natural
+  // measurement on a chess-spectral state). Other valid strings will
+  // be 'rook'|'bishop'|'queen'|'king'|'knight' once the H_piece_4
+  // observables are available as named PVMs upstream. We pass through
+  // whatever the caller sends; the qm_4d_bridge layer validates.
+  measureAt(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const coord = args && args.coord;
+    const observable = args && args.observable;
+    if (!coord) throw new Error('measureAt: requires { coord: {x,y,z,w} }');
+    pyodide.globals.set('_meas_x', coord.x | 0);
+    pyodide.globals.set('_meas_y', coord.y | 0);
+    pyodide.globals.set('_meas_z', coord.z | 0);
+    pyodide.globals.set('_meas_w', coord.w | 0);
+    pyodide.globals.set('_meas_obs', observable || null);
+    return pyodide
+      .runPython(
+        `
+def _do_measure_at():
+    try:
+        from chess_spectral.qm_4d_bridge import measure_at as _ma
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        coord = (int(_meas_x), int(_meas_y), int(_meas_z), int(_meas_w))
+        if _meas_obs is None:
+            r = _ma(gs4, coords=coord)
+        else:
+            r = _ma(gs4, coords=coord, observable=_meas_obs)
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_measure_at()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // Reduced density matrix ρ_piece for one piece. Args: { pieceId: int }
+  // Returns: { ok, rho: ComplexMatrix, purity, rank }
+  //
+  // pieceId convention follows chess_spectral_4d's piece-listing order
+  // (0..N-1 for the current state). For entanglement viz: tr(ρ²) = purity
+  // ∈ [1/d, 1]; rank > 1 indicates the piece is entangled with others.
+  getDensityMatrixOf(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const pieceId = (args && Number.isFinite(args.pieceId)) ? args.pieceId : 0;
+    pyodide.globals.set('_dm_pid', pieceId | 0);
+    return pyodide
+      .runPython(
+        `
+def _do_get_density_matrix():
+    try:
+        from chess_spectral.qm_4d_bridge import get_density_matrix_of as _gdm
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        r = _gdm(gs4, piece_id=int(_dm_pid))
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_density_matrix()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 6 });
+  },
+
+  // Probability-current field j_p(c) = Im(ψ* ∇ψ).
+  // Returns: { ok, j: Float32Array (typically 4096 × 4) }
+  //
+  // Layout per upstream contract: 4D flow vector at each lattice cell.
+  // The M14.2 filament viz traces this field to draw probability flow
+  // through the lattice. Per-cell index packing: idx = x*512+y*64+z*8+w;
+  // j[4*idx + axis] is the axis-component (axis ∈ {0=x,1=y,2=z,3=w}).
+  getProbabilityCurrent() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_get_prob_current():
+    try:
+        from chess_spectral.qm_4d_bridge import get_probability_current as _gpc
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        r = _gpc(gs4)
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_prob_current()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // Expectation value <ψ|H|ψ> for a Hermitian observable.
+  // Args: { observable: string, weights?: object }
+  //   observable: one of 'rook'|'bishop'|'queen'|'king'|'knight' (per
+  //              chess_spectral.qm_4d.H_piece_4 family). Other strings
+  //              passed through to upstream.
+  //   weights: optional dict for composing observables (e.g.
+  //            {'rook': 0.4, 'bishop': 0.3, ...}); upstream contract.
+  // Returns: { ok, value: number }
+  //
+  // For bot eval (M13.4 chess-spectral 1.6): this gives the QM-flavored
+  // contribution to evaluate_position. Returns a scalar.
+  getQmExpectation(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const observable = (args && args.observable) || 'rook';
+    pyodide.globals.set('_qme_obs', observable);
+    pyodide.globals.set('_qme_w', (args && args.weights) ? args.weights : null);
+    return pyodide
+      .runPython(
+        `
+def _do_get_qm_expectation():
+    try:
+        from chess_spectral.qm_4d_bridge import get_qm_expectation as _gqe
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        if _qme_w is None:
+            r = _gqe(gs4, observable=str(_qme_obs))
+        else:
+            # PyProxy -> dict
+            try:
+                w = _qme_w.to_py()
+            except AttributeError:
+                w = dict(_qme_w)
+            r = _gqe(gs4, observable=str(_qme_obs), weights=w)
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_qm_expectation()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
 };
 
 self.onmessage = async (event) => {

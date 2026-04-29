@@ -14,7 +14,7 @@ The user said: *"we'll need to see what we opened up api wise and what we find w
 
 ---
 
-## Currently exposed (20 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26 + 2 from M11.27 + 1 from M11.28)
+## Currently exposed (24 methods: 13 pre-1.5 + 2 M11.25 + 2 M11.26 + 2 M11.27 + 1 M11.28 + 4 M11.29)
 
 All methods return `Promise`s. The bridge serializes mutations through `applyChain` so move-applying methods don't race.
 
@@ -40,10 +40,14 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getQmState(opts?)` *(M11.27)* | `{ sideToMove?: bool }` | `{ ok, psi: Float32Array(90112), basisDim: 45056, normSq }` | (M14.x viz pending) | ψ as real+imag interleaved Float32; `psi[2k]=Re`, `psi[2k+1]=Im` |
 | `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | (M14.1 viz pending) | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
 | `applyMoveQm(origin, dest)` *(M11.28)* | `{x,y,z,w}` × 2 | `{ ok, psi: Float32Array(90112), basisDim, normSq }` | (M14.x preview overlays pending) | PREVIEW-style — returns ψ_post, doesn't mutate chess4d state |
+| `measureAt(coord, observable?)` *(M11.29)* | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, postCollapsePsi }` | (M14.4 click-to-measure pending) | Born-rule projective measurement; observable defaults to channel-PVM |
+| `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | (M14.3 entanglement viz pending) | tr(ρ²)=purity; rank>1 = entangled |
+| `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | (M14.2 filaments pending) | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
+| `getQmExpectation(observable, weights?)` *(M11.29)* | `string, object?` | `{ ok, value }` | (M13.4 bot eval pending) | `⟨ψ\|H\|ψ⟩` for piece-reach observables; composable via weights |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
-`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`, `getQmState`, `getQmDensity`, `applyMoveQm`.
+`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`, `getQmState`, `getQmDensity`, `applyMoveQm`, `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation`.
 
 ---
 
@@ -90,10 +94,10 @@ Tied to the design in `docs/qm_4d_design.md`. Lights up the M14.x visualization 
 | `getQmState()` | `qm_4d_bridge.get_qm_state` | **Wired in M11.27** ✅ | Returns `psi` as Float32 length 90112 (real+imag interleaved); `basisDim=45056`; `normSq` |
 | `getQmDensity(pieceId?)` | `qm_4d_bridge.get_qm_density` | **Wired in M11.27** ✅ | Returns `density: Float32Array(4096)` summing `\|ψ\|²` over channels |
 | `applyMoveQm(origin, dest)` | `qm_4d_bridge.apply_move_qm_full` | **Wired in M11.28** ✅ | PREVIEW-style: returns ψ_post but does NOT mutate chess4d.GameState. The classical advance still happens through applyMove() |
-| `measureAt(coords, observable?)` | `qm_4d_bridge.measure_at` | M11.28 | Born-rule projective measurement |
-| `getDensityMatrixOf(pieceId)` | `qm_4d_bridge.get_density_matrix_of` | M11.28 | For entanglement viz |
-| `getProbabilityCurrent()` | `qm_4d_bridge.get_probability_current` | M11.28 | `j_p(c) = Im(ψ* ∇ψ)` field for QM filaments |
-| `getQmExpectation(observable, weights?)` | `qm_4d_bridge.get_qm_expectation` | M11.28 | `⟨ψ\|H\|ψ⟩` for bot eval (composes with engine's `evaluatePosition`) |
+| `measureAt(coords, observable?)` | `qm_4d_bridge.measure_at` | **Wired in M11.29** ✅ | Born-rule projective measurement |
+| `getDensityMatrixOf(pieceId)` | `qm_4d_bridge.get_density_matrix_of` | **Wired in M11.29** ✅ | For entanglement viz |
+| `getProbabilityCurrent()` | `qm_4d_bridge.get_probability_current` | **Wired in M11.29** ✅ | `j_p(c) = Im(ψ* ∇ψ)` field for QM filaments |
+| `getQmExpectation(observable, weights?)` | `qm_4d_bridge.get_qm_expectation` | **Wired in M11.29** ✅ | `⟨ψ\|H\|ψ⟩` for bot eval (composes with engine's `evaluatePosition`) |
 
 **QM-API design call**: 7 read-only methods on the underlying state (the unitary `applyMoveQm` is the only mutation, and it semantically replaces the existing classical `applyMove`). All available in chess-spectral 1.5.0 (PyPI). The `chess_spectral.qm_4d` kinematics module exposes `H_rook_4`, `H_bishop_4`, `H_queen_4`, `H_king_4`, `H_knight_4` Hermitian observables; pawn observables defer to v1.7+ (pseudo-Hermitian η-metric, ADR-005).
 
