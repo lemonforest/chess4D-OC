@@ -51,34 +51,13 @@
   // without re-evaluating boardCoordinates.
   const _basePos = new Float32Array(4096 * 3);
 
-  // Shared color ramps with spectral_heatmap.js — kept independent so the
-  // modules don't import from each other (script-mode load order would
-  // make that fragile). Future: factor to a tiny `spectral_colors.js` if
-  // we add a third copy.
-  function viridisColor(t) {
-    if (t < 0.25) {
-      const u = t / 0.25;
-      return [0.10, 0.18 + u * 0.42, 0.55 + u * 0.45];
-    } else if (t < 0.5) {
-      const u = (t - 0.25) / 0.25;
-      return [0.10 + u * 0.05, 0.60 + u * 0.30, 1.00 - u * 0.50];
-    } else if (t < 0.75) {
-      const u = (t - 0.5) / 0.25;
-      return [0.15 + u * 0.65, 0.90 - u * 0.10, 0.50 - u * 0.40];
-    } else {
-      const u = (t - 0.75) / 0.25;
-      return [0.80 + u * 0.20, 0.80 - u * 0.55, 0.10];
-    }
-  }
-  function rdBuColor(t) {
-    if (t < 0.5) {
-      const u = t * 2;
-      return [0.20 + u * 0.80, 0.30 + u * 0.70, 0.65 + u * 0.35];
-    } else {
-      const u = (t - 0.5) * 2;
-      return [1.00 - u * 0.20, 1.00 - u * 0.80, 1.00 - u * 0.85];
-    }
-  }
+  // M11.23 — viridisColor, rdBuColor, percentileBounds now come from the
+  // SSOT module (js/spectral_color.js). The previous "future: factor to a
+  // tiny spectral_colors.js if we add a third copy" TODO is now resolved.
+  const viridisColor      = (window.SpectralColor && window.SpectralColor.viridisColor);
+  const rdBuColor         = (window.SpectralColor && window.SpectralColor.rdBuColor);
+  const _percentileBounds = (window.SpectralColor && window.SpectralColor.percentileBounds);
+
   function _applyTransform(arr) {
     if (transform !== 'log1p') return arr;
     const out = new Float32Array(arr.length);
@@ -87,11 +66,6 @@
       out[i] = v >= 0 ? Math.log1p(v) : -Math.log1p(-v);
     }
     return out;
-  }
-  function _percentileBounds(arr, lo, hi) {
-    const sorted = new Float32Array(arr).sort();
-    const n = sorted.length;
-    return [sorted[Math.floor(lo * n)], sorted[Math.min(n - 1, Math.floor(hi * n))]];
   }
 
   function buildMesh() {

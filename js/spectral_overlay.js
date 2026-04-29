@@ -92,23 +92,16 @@
       // so even modest intensity changes between destinations are visible.
       const opacity = 0.20 + norm * 0.78;
       // Color ramp: low = cool blue (cold cell), mid = green-cyan, high = warm
-      // amber-red (hot cell). The ramp is computed in (R, G, B) ∈ [0, 1].
-      // Picked by hand to give a clean dark-blue → cyan → green → yellow → red
-      // viridis-ish path that reads on the dark background.
-      let r, g, b;
-      if (norm < 0.25) {
-        const t = norm / 0.25;
-        r = 0.10;            g = 0.18 + t * 0.42; b = 0.55 + t * 0.45;
-      } else if (norm < 0.5) {
-        const t = (norm - 0.25) / 0.25;
-        r = 0.10 + t * 0.05; g = 0.60 + t * 0.30; b = 1.00 - t * 0.50;
-      } else if (norm < 0.75) {
-        const t = (norm - 0.5) / 0.25;
-        r = 0.15 + t * 0.65; g = 0.90 - t * 0.10; b = 0.50 - t * 0.40;
-      } else {
-        const t = (norm - 0.75) / 0.25;
-        r = 0.80 + t * 0.20; g = 0.80 - t * 0.55; b = 0.10;
-      }
+      // amber-red (hot cell). M11.23 — sourced from window.SpectralColor.
+      // viridisColor (js/spectral_color.js) so heatmap, board-tint, dot-plot,
+      // and this overlay all share one calibration. Fall back to a neutral
+      // gray if the SSOT module hasn't loaded yet (defensive — APP_SCRIPTS
+      // sequencing should always have it ready by the time hover preview
+      // fires, but a missing-module exception here would break the overlay).
+      const ramp = (window.SpectralColor && window.SpectralColor.viridisColor)
+        ? window.SpectralColor.viridisColor(norm)
+        : [0.5, 0.5, 0.5];
+      const r = ramp[0], g = ramp[1], b = ramp[2];
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const mat of mats) {
         if (!mat) continue;

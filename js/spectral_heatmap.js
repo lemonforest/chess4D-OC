@@ -85,32 +85,10 @@
   const MAX_LOCAL_MAXIMA_CAP = 512; // hard cap; chess channels rarely exceed ~80
 
   // ---------- color ramps -----------------------------------------------------
-  // Unipolar viridis-ish (0..1).
-  function viridisColor(t) {
-    if (t < 0.25) {
-      const u = t / 0.25;
-      return [0.10, 0.18 + u * 0.42, 0.55 + u * 0.45];
-    } else if (t < 0.5) {
-      const u = (t - 0.25) / 0.25;
-      return [0.10 + u * 0.05, 0.60 + u * 0.30, 1.00 - u * 0.50];
-    } else if (t < 0.75) {
-      const u = (t - 0.5) / 0.25;
-      return [0.15 + u * 0.65, 0.90 - u * 0.10, 0.50 - u * 0.40];
-    } else {
-      const u = (t - 0.75) / 0.25;
-      return [0.80 + u * 0.20, 0.80 - u * 0.55, 0.10];
-    }
-  }
-  // Diverging RdBu-style for signed values; t=0.5 is neutral white.
-  function rdBuColor(t) {
-    if (t < 0.5) {
-      const u = t * 2;                 // blue → white
-      return [0.20 + u * 0.80, 0.30 + u * 0.70, 0.65 + u * 0.35];
-    } else {
-      const u = (t - 0.5) * 2;         // white → red
-      return [1.00 - u * 0.20, 1.00 - u * 0.80, 1.00 - u * 0.85];
-    }
-  }
+  // Sourced from window.SpectralColor (js/spectral_color.js, M11.23). Local
+  // const aliases keep the call sites unchanged for diff readability.
+  const viridisColor = (window.SpectralColor && window.SpectralColor.viridisColor);
+  const rdBuColor    = (window.SpectralColor && window.SpectralColor.rdBuColor);
 
   // ---------- value transform -------------------------------------------------
   // signed log1p: keep sign, compress magnitude. log1p(0)=0 so neutral cells
@@ -127,13 +105,9 @@
   }
 
   // ---------- percentile clip --------------------------------------------------
-  // Returns [pLo, pHi] using p5 / p95 of `arr`. Robust to single-cell outliers.
-  // Float32Array.sort() is numeric by default — no comparator needed.
-  function _percentileBounds(arr, lo = 0.05, hi = 0.95) {
-    const sorted = new Float32Array(arr).sort();
-    const n = sorted.length;
-    return [sorted[Math.floor(lo * n)], sorted[Math.min(n - 1, Math.floor(hi * n))]];
-  }
+  // Sourced from window.SpectralColor.percentileBounds (js/spectral_color.js,
+  // M11.23). Default 5/95 percentiles preserved by the SSOT module.
+  const _percentileBounds = (window.SpectralColor && window.SpectralColor.percentileBounds);
 
   // ---------- local-max detection ---------------------------------------------
   // 4D face-neighbor strict-greater test. Returns array of cell indices that
