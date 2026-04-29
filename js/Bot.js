@@ -309,15 +309,33 @@ const Bot = {
      * @param {number} team - Team to move (0=white, 1=black)
      * @returns {Promise<boolean>} - True if move was made
      */
-    makeMove: function(gameBoard, moveManager, team) {
+    // M11.17: now async so we can `await` a setTimeout(0) yield before
+    // the sync hasLegalMoves scan, giving the busy-indicator a chance
+    // to paint. The function still returns a Promise<boolean> like
+    // before — async/await is just shorthand for the Promise plumbing.
+    makeMove: async function(gameBoard, moveManager, team) {
         if (!gameBoard || !moveManager) {
             console.error('Bot: gameBoard or moveManager not available');
             return Promise.resolve(false);
         }
         
-        // CRITICAL: Check if team is in checkmate/stalemate before attempting to move
+        // CRITICAL: Check if team is in checkmate/stalemate before attempting to move.
+        // M11.17: hasLegalMoves can take hundreds of ms in real checkmate
+        // (no piece has a legal escape; we test all 448 × ~80 candidates).
+        // Show the busy indicator before blocking the main thread, then
+        // yield once so the spinner paints before the sync scan runs.
         const isInCheck = gameBoard.inCheck(team);
+        if (typeof window !== 'undefined' && window._showThinking) {
+            window._showThinking('Bot ' + (team === 0 ? 'white' : 'black') + ' checking legal moves…');
+        }
+        // Synchronous yield: setTimeout(0) inside a Promise resolves on the
+        // next event-loop tick, which gives the renderer a chance to paint
+        // the indicator before we proceed with the heavy sync call below.
+        await new Promise(function (r) { setTimeout(r, 0); });
         const hasLegalMoves = gameBoard.hasLegalMoves(team);
+        if (typeof window !== 'undefined' && window._hideThinking) {
+            window._hideThinking();
+        }
         
         if (isInCheck && !hasLegalMoves) {
             console.log(`🛑 Bot: Team ${team} is in CHECKMATE - cannot make a move`);
