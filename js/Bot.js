@@ -355,15 +355,37 @@ const Bot = {
             return Promise.resolve(false);
         }
         
+        // M11.21: record the start time so the visual gate (the
+        // 1.2-second pause between piece-highlight and move-execution)
+        // can OVERLAP with compute. If a slow strategy (e.g. ?bot=smart
+        // depth 3, 4-second budget) already kept the user waiting, we
+        // skip the additional pause; if compute was fast (v0 single-ply
+        // ~5ms), we still wait the visual gate so the user sees what
+        // piece the bot picked before the animation fires.
+        const turnStartTime = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+
         // M13.2: dispatch through the strategy registry. Each team has its
         // own active strategy (default 'v0' both sides; URL flags or UI
         // dropdowns can pick different strategies per team for A/B testing).
+        // M11.21: show busy indicator during compute (smart-bot search can
+        // take seconds; without the indicator the page LOOKS frozen even
+        // though the GPU compositor is still spinning the busy badge from
+        // the earlier hasLegalMoves call).
         const stratName = Bot.getActiveStrategyName(team);
+        if (typeof window !== 'undefined' && window._showThinking) {
+            window._showThinking('Bot ' + (team === 0 ? 'white' : 'black') + ' (' + stratName + ') searching…');
+        }
+        // Yield once so the indicator paints before the (possibly slow)
+        // synchronous search blocks the main thread.
+        await new Promise(function (r) { setTimeout(r, 0); });
         const strategy = Bot.strategies[stratName];
         const move = strategy
             ? strategy.getBestMove(gameBoard, team)
             : Bot.getBestMove(gameBoard, team); // fallback if registry is missing
-        
+        if (typeof window !== 'undefined' && window._hideThinking) {
+            window._hideThinking();
+        }
+
         if (!move) {
             console.warn(`Bot: No legal moves found for team ${team} - may be checkmate/stalemate`);
             // Double-check win condition if no move found
@@ -372,9 +394,9 @@ const Bot = {
             }
             return Promise.resolve(false);
         }
-        
+
         console.log(`🤖 Bot (team ${team}) selected move: (${move.x0},${move.y0},${move.z0},${move.w0}) → (${move.x1},${move.y1},${move.z1},${move.w1})`);
-        
+
         return new Promise((resolve) => {
             // Step 1: Select the piece and show possible moves (visual feedback)
             const sourcePiece = gameBoard.pieces[move.x0][move.y0][move.z0][move.w0];
@@ -417,11 +439,32 @@ const Bot = {
                 gameBoard.graphics.showPossibleMoves(possibleMoves, sourcePiece, {}, false);
             }
             
-            // Step 2: Wait a bit for visual feedback, then execute
+            // M11.21: visual gate now overlaps with compute. If the
+            // total elapsed time (since makeMove entered) is already at
+            // or beyond VISUAL_GATE_MS, fire the move immediately —
+            // the user has already seen plenty of "bot thinking" plus
+            // the highlight. Otherwise wait the remainder so fast
+            // strategies (v0/random) still pause long enough for the
+            // user to register which piece was selected.
+            const VISUAL_GATE_MS = 1200; // total minimum bot-turn duration
+            // Always show the highlight for at least HIGHLIGHT_MIN_MS
+            // even if compute was instant + total elapsed already
+            // exceeds VISUAL_GATE_MS — otherwise the highlight might
+            // never visibly appear (e.g. compute = 50 ms, gate = 0,
+            // execute fires before browser paints the highlight).
+            const HIGHLIGHT_MIN_MS = 250;
+            const nowT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+            const elapsed = nowT - turnStartTime;
+            const wait = Math.max(HIGHLIGHT_MIN_MS, VISUAL_GATE_MS - elapsed);
+            console.log(
+                '[m11.21/bot-gate] elapsed=' + elapsed.toFixed(0) + 'ms ' +
+                'wait=' + wait.toFixed(0) + 'ms ' +
+                '(strategy=' + stratName + ')'
+            );
             setTimeout(() => {
                 // Execute the move
                 Bot.executeMoveImmediate(gameBoard, moveManager, move, resolve);
-            }, 1200); // 1.2 seconds to see the selection
+            }, wait);
         });
     },
     
