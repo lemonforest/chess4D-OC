@@ -2366,18 +2366,21 @@ function _checkWinConditionSync() {
         modalMessage.textContent = 'White wins the game!';
         modal.style.display = 'flex';
         stopBotMoveInterval(); // Stop bot moves if game is over
+        stopGameTimer();       // M11.19: stop the game clock too
     } else if (winStatus === 1) {
         // Black wins
         modalTitle.textContent = 'Checkmate!';
         modalMessage.textContent = 'Black wins the game!';
         modal.style.display = 'flex';
         stopBotMoveInterval(); // Stop bot moves if game is over
+        stopGameTimer();       // M11.19: stop the game clock too
     } else if (winStatus === 2) {
         // Stalemate
         modalTitle.textContent = 'Stalemate!';
         modalMessage.textContent = 'The game ends in a draw.';
         modal.style.display = 'flex';
         stopBotMoveInterval(); // Stop bot moves if game is over
+        stopGameTimer();       // M11.19: stop the game clock too
     } else {
         // Game continues
         modal.style.display = 'none';
