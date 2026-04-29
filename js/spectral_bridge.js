@@ -196,6 +196,27 @@
     // Cache this once at boot — it's runtime-invariant for a given
     // chess-spectral version.
     getEncoderShape: () => call('getEncoderShape'),
+
+    // ───────────────────────────────────────────────────────────────
+    // M11.26: async legality + state read-out for checkmate/stalemate
+    // detection without blocking the main thread.
+    // ───────────────────────────────────────────────────────────────
+
+    // Async drop-in for gameBoard.hasLegalMoves(team). Returns
+    //   { ok, hasMoves: boolean }
+    // Goes through applyChain so it observes the post-move state when
+    // called immediately after applyMove resolves. Designed to drive
+    // checkmate / stalemate detection off the main thread (the M11.16
+    // freeze fix's principled cutover path).
+    hasLegalMoves: (team) =>
+      applyChain.then(() => call('hasLegalMoves', { team })),
+
+    // Returns { ok, fen4 } — current state as FEN4 v1 string. Best-
+    // effort serialization (probes chess_spectral.fen_4d for a canonical
+    // serializer; falls back to hand-rolled minimal v1). Suitable for
+    // M11.6-style export-to-clipboard and round-trip into the QM
+    // bridge for analysis.
+    getFen4State: () => applyChain.then(() => call('getFen4State')),
   };
   window.SpectralBridge = bridge;
 

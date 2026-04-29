@@ -117,6 +117,35 @@ def _legal_moves_spatial(state, origin):
         legal.append(m)
     return legal
 
+def _has_legal_moves_chess4d(state, color):
+    """True iff color has any legal move from the current state.
+
+    Mirrors gameBoard.hasLegalMoves(team) in JS, but in Python so the
+    50-piece cap and king-first scan tricks aren't needed - Python is
+    fast enough to brute-force the 4D piece list inside a single
+    Pyodide call. Used by SpectralBridge.hasLegalMoves to drive
+    checkmate / stalemate detection without blocking the main thread.
+
+    Stops at the first legal move (no full enumeration). M11.16's
+    king-first heuristic is preserved here since checkmate scans most
+    often need the king's escape moves resolved fast."""
+    pieces = list(state.board.pieces_of(color))
+    # King-first ordering — a king move from check is the cheapest
+    # confirmation that the team is not in checkmate.
+    pieces.sort(key=lambda sq_p: 0 if sq_p[1].piece_type == PieceType.KING else 1)
+    for sq, p in pieces:
+        gen = _PIECE_GEN.get(p.piece_type)
+        if gen is None:
+            continue
+        for m in gen(sq, p.color, state.board):
+            try:
+                state.push(m)
+            except IllegalMoveError:
+                continue
+            state.pop()
+            return True
+    return False
+
 def _legal_moves_phase(state, origin):
     """chess_spectral phase-operator oracle. Returns Move4D list. The
     occupation-aware A variant already filters for own-king-not-attacked,
@@ -168,6 +197,54 @@ def _pieces_to_dicts(state):
                 'pawn_axis': p.pawn_axis.name.lower() if p.pawn_axis is not None else None,
             })
     return out
+
+def _state_to_fen4(state):
+    """Best-effort FEN4 v1 serialization of the current chess4d state.
+
+    chess-spectral 1.5 exposes chess_spectral.fen_4d.parse for the
+    inverse direction, but as of 1.5.0 there's no public serializer
+    we can rely on across both packages. Strategy:
+      1. Probe chess_spectral.fen_4d for serialize/dump/to_fen4 -
+         these would be the canonical entry points.
+      2. Probe chess_spectral_4d.fen_4d likewise (the new 4D
+         game-state package may carry the round-trip).
+      3. Fall back to a hand-rolled v1: '4d-fen v1: <PCS@x,y,z,w; ...>'
+         where uppercase = white, lowercase = black, pawns get the
+         axis suffix /x|y|z|w so the encoder can resolve direction.
+
+    This serializer doesn't (yet) carry side-to-move, castling rights,
+    en-passant target, or halfmove clock - chess_spectral 1.5's v1
+    parser tolerates board-only strings for static-position use, which
+    is all M11.26 needs (the QM bridge methods that consume FEN4 only
+    care about board placement). Adding header fields belongs to
+    M11.26.1 once we've validated round-trip in a Pyodide preview."""
+    # Probe canonical serializer first
+    for modname in ('chess_spectral.fen_4d', 'chess_spectral_4d.fen_4d'):
+        try:
+            mod = __import__(modname, fromlist=['*'])
+        except Exception:
+            continue
+        for fn in ('serialize', 'dump', 'to_fen4', 'unparse'):
+            f = getattr(mod, fn, None)
+            if callable(f):
+                try:
+                    return f(state.board)
+                except Exception:
+                    try:
+                        return f(state)
+                    except Exception:
+                        pass
+    # Hand-rolled fallback — minimal v1 board-only.
+    placements = []
+    for sq, p in state.board._squares.items():
+        upper = _PIECE_CHAR[p.piece_type]
+        char = upper if p.color == Color.WHITE else upper.lower()
+        coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
+        if p.piece_type == PieceType.PAWN and p.pawn_axis is not None:
+            placements.append(f'{char}/{p.pawn_axis.name.lower()}@{coord}')
+        else:
+            placements.append(f'{char}@{coord}')
+    return '4d-fen v1: ' + '; '.join(placements)
 
 def _state_to_pos4(state):
     """Convert chess4d state to {sq_idx: piece_value} for chess_spectral.encoder_4d.
@@ -686,6 +763,60 @@ _do_encoder_shape()
 `
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // Async win-condition / cutover-readiness probe (M11.26).
+  // Args: { team: 0|1 }
+  // Returns: { ok, hasMoves: boolean }
+  //
+  // Drop-in replacement for the synchronous JS gameBoard.hasLegalMoves
+  // — runs the same king-first scan in Python so the main thread isn't
+  // blocked. Together with the inCheck() logic on GameBoard, this lets
+  // checkmate / stalemate detection happen off the main thread, fixing
+  // the M11.16 freeze class of bug at the source.
+  hasLegalMoves(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const team = args && (args.team === 0 || args.team === 1) ? args.team : 0;
+    pyodide.globals.set('_team_arg', team);
+    return pyodide
+      .runPython(
+        `
+def _do_has_legal_moves():
+    try:
+        col = Color.WHITE if int(_team_arg) == 0 else Color.BLACK
+        return {'ok': True, 'hasMoves': bool(_has_legal_moves_chess4d(_state, col))}
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_has_legal_moves()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // Current state as FEN4 v1 string (M11.26).
+  // Returns: { ok, fen4 } or { ok: false, error }
+  //
+  // Best-effort serialization: probes chess_spectral.fen_4d and
+  // chess_spectral_4d.fen_4d for a canonical serializer, falls back
+  // to a hand-rolled minimal v1 board-only string. Adequate for
+  // export-to-clipboard and round-tripping into qm_4d_bridge.load_fen4
+  // for QM analysis. Doesn't carry move history or side-to-move yet —
+  // M11.26.1 will extend once we've observed the upstream serializer's
+  // output shape in a Pyodide preview.
+  getFen4State() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_get_fen4():
+    try:
+        return {'ok': True, 'fen4': _state_to_fen4(_state)}
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_fen4()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
   },
 };
 
