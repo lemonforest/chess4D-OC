@@ -55,6 +55,16 @@
   // threshold get scale=0. Slider sweeps a "percentile shell": 0 = show
   // everything (default), 0.75 = show only top quartile, 0.95 = top 5%.
   let intensityThreshold = 0;
+  // M11.3.2 — 4D clipping sphere. When clipMode is 'center' or 'peak',
+  // hide cells whose 4D Euclidean distance from the chosen reference
+  // exceeds clipRadius. Adapted from Hofmann/Rieck/Sadlo 2018 — kills
+  // projection-induced clutter by restricting the view to a 4D ball.
+  // 'center' = lattice center (3.5, 3.5, 3.5, 3.5).
+  // 'peak'   = brightest cell (recomputed each refresh).
+  // 'click'  = use a sticky 4D pin set by SpectralHeatmap.setClipPin().
+  let clipMode   = 'off';        // 'off' | 'center' | 'peak' | 'click'
+  let clipRadius = 14;           // ~max 4D Euclidean diameter is sqrt(4*7^2) ≈ 14
+  let _clipPin   = null;         // [x, y, z, w] when clipMode === 'click'
 
   // Cached per-cell base translation (no scale) so refresh() only has
   // to compose translation × scale, not re-evaluate boardCoordinates.
@@ -286,6 +296,35 @@
                        : -1;
       const useSlice = sliceShift >= 0;
       const useThreshold = intensityThreshold > 0;
+
+      // M11.3.2 — compute clip-sphere reference once before the inner loop.
+      let useClip = false;
+      let clipCx = 0, clipCy = 0, clipCz = 0, clipCw = 0;
+      if (clipMode === 'center') {
+        clipCx = 3.5; clipCy = 3.5; clipCz = 3.5; clipCw = 3.5;
+        useClip = true;
+      } else if (clipMode === 'peak') {
+        // Find the brightest cell on the ALREADY-transformed array (so
+        // log1p / signed mode reflects in the peak choice).
+        let peakIdx = 0, peakVal = -Infinity;
+        for (let k = 0; k < arr.length; k++) {
+          const v = (colorMode === 'signed') ? Math.abs(arr[k]) : arr[k];
+          if (v > peakVal) { peakVal = v; peakIdx = k; }
+        }
+        clipCx = (peakIdx >> 9) & 7;
+        clipCy = (peakIdx >> 6) & 7;
+        clipCz = (peakIdx >> 3) & 7;
+        clipCw = peakIdx & 7;
+        useClip = true;
+      } else if (clipMode === 'click' && _clipPin) {
+        clipCx = _clipPin[0]; clipCy = _clipPin[1];
+        clipCz = _clipPin[2]; clipCw = _clipPin[3];
+        useClip = true;
+      }
+      // Soft falloff zone: 10% of the radius. Cells beyond R hard-clip;
+      // cells in [R - falloff, R] linearly fade.
+      const clipFalloff = Math.max(0.5, clipRadius * 0.10);
+      const clipInner   = clipRadius - clipFalloff;
       for (let i = 0; i < arr.length; i++) {
         let t = (arr[i] - mapLo) / range;
         if (t < 0) t = 0; else if (t > 1) t = 1;
@@ -300,13 +339,33 @@
         let s = 0.45 + heightT * 0.60;
         // M11.3 filters: slice mask (hide off-axis cells) and intensity
         // threshold (hide cells below the percentile floor). Either filter
-        // collapses the box to scale 0 (invisible).
+        // collapses the box to scale 0 (invisible). M11.3.2 adds a 4D
+        // clipping sphere on top.
         if (useSlice && ((i >> sliceShift) & 7) !== sliceValue) {
           s = 0;
         } else if (useThreshold && (
           (colorMode === 'signed' ? Math.abs(t - 0.5) * 2 : t) < intensityThreshold
         )) {
           s = 0;
+        } else if (useClip) {
+          const px = (i >> 9) & 7;
+          const py = (i >> 6) & 7;
+          const pz = (i >> 3) & 7;
+          const pw = i & 7;
+          const dxc = px - clipCx, dyc = py - clipCy;
+          const dzc = pz - clipCz, dwc = pw - clipCw;
+          const dist4 = Math.sqrt(dxc*dxc + dyc*dyc + dzc*dzc + dwc*dwc);
+          if (dist4 > clipRadius) {
+            s = 0;
+          } else if (dist4 > clipInner) {
+            // Linear falloff in the outer skin so the boundary doesn't
+            // pop. Cells at exactly R get scale 0; cells at R-falloff
+            // get full scale.
+            s *= (clipRadius - dist4) / clipFalloff;
+            cellsShown++;
+          } else {
+            cellsShown++;
+          }
         } else {
           cellsShown++;
         }
@@ -336,6 +395,16 @@
               const heightT = (colorMode === 'signed') ? Math.abs(t - 0.5) * 2 : t;
               if (heightT < intensityThreshold) continue;
             }
+            // M11.3.2: respect the 4D clipping sphere too.
+            if (useClip) {
+              const px = (cell >> 9) & 7;
+              const py = (cell >> 6) & 7;
+              const pz = (cell >> 3) & 7;
+              const pw = cell & 7;
+              const dxc = px - clipCx, dyc = py - clipCy;
+              const dzc = pz - clipCz, dwc = pw - clipCw;
+              if (Math.sqrt(dxc*dxc + dyc*dyc + dzc*dzc + dwc*dwc) > clipRadius) continue;
+            }
             _writeMatrix(
               overlay, written, 1.0,
               _basePos[cell * 3], _basePos[cell * 3 + 1], _basePos[cell * 3 + 2]
@@ -359,7 +428,8 @@
           `meanT=${(totalIntensity / arr.length).toFixed(3)} ` +
           `cellsShown=${cellsShown}/${arr.length}` +
           (useSlice ? ` slice=${sliceAxis}=${sliceValue}` : '') +
-          (useThreshold ? ` threshold=${intensityThreshold.toFixed(2)}` : '')
+          (useThreshold ? ` threshold=${intensityThreshold.toFixed(2)}` : '') +
+          (useClip ? ` clip=${clipMode}@(${clipCx.toFixed(1)},${clipCy.toFixed(1)},${clipCz.toFixed(1)},${clipCw.toFixed(1)}) R=${clipRadius.toFixed(1)}` : '')
       );
     } catch (err) {
       console.warn('[m10/heatmap] refresh error:', err);
@@ -398,6 +468,18 @@
         const tFlag2 = params.get('heatmapThreshold');
         const tNum = parseFloat(tFlag2);
         if (Number.isFinite(tNum)) intensityThreshold = Math.max(0, Math.min(1, tNum));
+        // M11.3.2 — clip sphere URL flag. Format: ?heatmapClip=peak:6
+        // or ?heatmapClip=center:8 (mode:radius).
+        const cFlag = params.get('heatmapClip');
+        if (cFlag) {
+          const parts = cFlag.split(':');
+          const m = parts[0];
+          if (m === 'off' || m === 'center' || m === 'peak' || m === 'click') {
+            clipMode = m;
+          }
+          const rNum = parseFloat(parts[1]);
+          if (Number.isFinite(rNum)) clipRadius = Math.max(0, Math.min(14, rNum));
+        }
         const flag = params.get('heatmap');
         if (flag && flag !== 'off') {
           channel = flag;
@@ -473,6 +555,49 @@
       if (enabled) refresh();
     },
     getIntensityThreshold() { return intensityThreshold; },
+    /**
+     * M11.3.2 — 4D clipping sphere. Hides cells whose 4D Euclidean
+     * distance from the chosen reference point exceeds `radius`.
+     *   mode: 'off' | 'center' | 'peak' | 'click'
+     *     - center: lattice center (3.5, 3.5, 3.5, 3.5)
+     *     - peak: brightest cell each refresh
+     *     - click: use the sticky pin (set via setClipPin)
+     *   radius: 0..14 (max 4D Euclidean diameter ≈ sqrt(4·7²) ≈ 14)
+     */
+    setClipSphere(mode, radius) {
+      const ok = (mode === 'off' || mode === 'center' || mode === 'peak' || mode === 'click');
+      if (!ok) return;
+      let dirty = false;
+      if (mode !== clipMode) { clipMode = mode; dirty = true; }
+      if (Number.isFinite(radius)) {
+        const r = Math.max(0, Math.min(14, radius));
+        if (r !== clipRadius) { clipRadius = r; dirty = true; }
+      }
+      if (dirty && enabled) refresh();
+    },
+    getClipSphere() { return { mode: clipMode, radius: clipRadius }; },
+    /**
+     * M11.3.2 — pin a 4D reference point for the 'click' clip mode.
+     * Pass a 4-tuple of integer or float lattice coordinates [x,y,z,w]
+     * each in [0,7], or null to clear the pin.
+     */
+    setClipPin(coords) {
+      if (coords === null || coords === undefined) {
+        _clipPin = null;
+      } else if (Array.isArray(coords) && coords.length === 4 &&
+                 coords.every(c => Number.isFinite(c))) {
+        _clipPin = [
+          Math.max(0, Math.min(7, coords[0])),
+          Math.max(0, Math.min(7, coords[1])),
+          Math.max(0, Math.min(7, coords[2])),
+          Math.max(0, Math.min(7, coords[3])),
+        ];
+      } else {
+        return;
+      }
+      if (enabled && clipMode === 'click') refresh();
+    },
+    getClipPin() { return _clipPin ? _clipPin.slice() : null; },
     refresh,
     getChannel()   { return channel; },
     isEnabled()    { return enabled; },
