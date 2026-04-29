@@ -1,6 +1,35 @@
 # `chess_spectral.qm_4d` — design doc for an optional QM extension
 
-Status: **proposal**, not implementation. Belongs in the chess-spectral repo (separate from chess4D-OC). This document records the design so it doesn't drift while we work on other things.
+Status (updated 2026-04-29 from chess-maths notebook drift audit): **kinematic shipped, dynamics pending**. The chess-spectral repo now contains `chess_spectral/qm_4d.py` with the five non-pawn `H_piece_4` Hermitian observables and verified spectral-identity / Hermiticity / spectrum-bound results. Track A (kinematic) is unblocked and consumable from chess4D-OC once chess-spectral 1.5 tag-pushes. Track B (full unitary dynamics — `applyMoveQm` + Born-rule sampling + entanglement viz) is still pending.
+
+The rest of this document was written when the QM module was a proposal. The architectural design (indicator basis, normalization choices, observable construction patterns) still applies; the section labels say "proposed" where the math is now real and the corresponding chess-spectral code exists.
+
+## What's in chess-spectral 1.5 today (per 2026-04-29 audit)
+
+Refined per-piece observable spectra (vs the earlier paraphrased `[-4, 28]` that crept in across all pieces):
+
+| Piece | H_piece_4 spectrum bound |
+|---|---|
+| Rook | `[-4, 28]` |
+| Bishop | `[-12, 54.4]` |
+| Queen | `[-16, 81.9]` |
+| King | `[-22, 67.7]` |
+| Knight | `[-36.06, 36.06]` |
+| Pawn | (breaks Hermiticity — handled separately, not yet in 1.5) |
+
+Three pre-flight findings that motivate the design:
+
+1. **Encoder injectivity is NOT strict** without side-to-move. There are 8 collision pairs on synthetic corpora, identified as the fixed-point set of (central inversion + color flip). 100% injective on real games. Fix: include side-to-move bit in `state_to_psi(state, side_to_move)`. **Load-bearing**: without it the proposed indicator-basis state vector is ambiguous on certain symmetric positions.
+
+2. **Phase operators are real-symmetric Hermitian**. The five non-pawn `P_piece_4` predicate functions lift to real-symmetric matrices — full Hermiticity, not pseudo-Hermiticity. Spectra are real (the bounds in the table above). Pawn breaks Hermiticity because of the forward/backward asymmetry; needs separate treatment.
+
+3. **Spectral identity holds at machine precision**. The encoder's 4096 modes ARE the simultaneous eigenbasis of (Δ, B_4 commutant). Max measured commutator: 1.6e-13. This is the canonicalness argument that the indicator-basis design relies on.
+
+---
+
+## (Original proposal text follows.)
+
+Belongs in the chess-spectral repo (separate from chess4D-OC). This document records the design so it doesn't drift while we work on other things.
 
 ## Why this exists
 
