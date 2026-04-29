@@ -1,6 +1,8 @@
 # `chess_spectral.qm_4d` — design doc for an optional QM extension
 
-Status (updated 2026-04-29 from chess-maths notebook drift audit): **kinematic shipped, dynamics pending**. The chess-spectral repo now contains `chess_spectral/qm_4d.py` with the five non-pawn `H_piece_4` Hermitian observables and verified spectral-identity / Hermiticity / spectrum-bound results. Track A (kinematic) is unblocked and consumable from chess4D-OC once chess-spectral 1.5 tag-pushes. Track B (full unitary dynamics — `applyMoveQm` + Born-rule sampling + entanglement viz) is still pending.
+Status (updated 2026-04-29): **kinematic implementation merged in chess-spectral source; PyPI 1.5 tag pending the user's "immolation-suite" smoke-test pass**. The chess-spectral repo now contains `chess_spectral/qm_4d.py` with the five non-pawn `H_piece_4` Hermitian observables and verified spectral-identity / Hermiticity / spectrum-bound results. Track A (kinematic) is unblocked at the source level. Track B (full unitary dynamics — `applyMoveQm` + Born-rule sampling + entanglement viz) is still pending.
+
+Until the PyPI 1.5 tag lands, the chess4D-OC worker (`js/spectral_worker.js`) `micropip.install`s chess-spectral 1.3.x and can't actually consume `qm_4d` at runtime. Bridge methods like `getQmState`, `getQmDensity`, etc. (described below) need both the PyPI tag AND a chess4D-OC-side wiring PR to light up. The latter is queued as M14.x once 1.5 is on PyPI.
 
 The rest of this document was written when the QM module was a proposal. The architectural design (indicator basis, normalization choices, observable construction patterns) still applies; the section labels say "proposed" where the math is now real and the corresponding chess-spectral code exists.
 
