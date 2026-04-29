@@ -55,6 +55,14 @@
   // Anything else → fetch that scalar channel and follow its gradient.
   let _channel = null;
 
+  // M11.2: topology mode. When true, seeding is replaced with Morse-Smale
+  // critical-point detection: lines emanate from local maxima/minima/saddles
+  // along the Hessian eigenvectors, integrated in the direction set by the
+  // sign of the corresponding eigenvalue. Colored red (ascending manifold,
+  // λ>0) or blue (descending manifold, λ<0) — visualizes the topological
+  // skeleton of the field.
+  let _topologyMode = false;
+
   function _ensureMesh() {
     if (lineMesh) return lineMesh;
     if (!_scene) return null;
@@ -191,6 +199,149 @@
   // Pre-allocated scratch buffers for forward + backward paths.
   const _bwdPath = new Float32Array((STEP_COUNT_MAX + 1) * 4);
   const _fwdPath = new Float32Array((STEP_COUNT_MAX + 1) * 4);
+  // For topology mode: just the forward walk per seed.
+  const _topoPath = new Float32Array((STEP_COUNT_MAX + 1) * 4);
+
+  // ------ M11.2 topology mode: Morse-Smale eigenvector seeding -------------
+  async function _refreshTopology(mesh) {
+    // Topology mode requires a SCALAR channel for Hessian computation.
+    // STD4 is a vector field; if the user has it selected (or 'off'),
+    // we fall back to A1 — chess-spectral's natural "general complexity"
+    // scalar — and log a note.
+    let chName = (_channel && _channel !== 'off' && _channel !== 'STD4') ? _channel : 'A1';
+    if (_channel !== chName) {
+      console.log(`[m11.2/filaments] topology mode requires a scalar channel; falling back from "${_channel}" to "${chName}"`);
+    }
+    const res = await window.SpectralBridge.getBoardEncoding([chName]);
+    if (!res || !res.ok) {
+      console.warn('[m11.2/filaments] getBoardEncoding failed:', res && res.reason);
+      return;
+    }
+    const arr = res.channels && res.channels[chName];
+    if (!arr || !arr.length) {
+      console.warn(`[m11.2/filaments] channel "${chName}" not in response`);
+      return;
+    }
+    if (!window.Topology4D) {
+      console.warn('[m11.2/filaments] Topology4D module unavailable');
+      return;
+    }
+
+    const cps = window.Topology4D.findCriticalPoints(arr);
+    if (!cps.length) {
+      // No critical points found — show empty filaments.
+      mesh.geometry.setDrawRange(0, 0);
+      mesh.geometry.attributes.position.needsUpdate = true;
+      mesh.geometry.attributes.color.needsUpdate    = true;
+      if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+      return;
+    }
+
+    // Sample function: gradient of the scalar at a sub-cell position.
+    const sampleField = function (x, y, z, w) { return _gradientScalar(arr, x, y, z, w); };
+
+    const positions = mesh.geometry.attributes.position.array;
+    const colors    = mesh.geometry.attributes.color.array;
+    let writeIdx = 0;
+    const gfx = _gameBoard.graphics;
+    const yOffset = 0.4;
+    const maxBufferSegments = SEED_COUNT_MAX * STEP_COUNT_MAX;
+
+    // Seed offset: 0.5 lattice units along the eigenvector. Critical-point
+    // cell itself has gradient ≈ 0 (so the walker would stall). Offsetting
+    // half a cell along the eigenvector picks up a non-zero ∇φ that points
+    // either into or away from the critical point depending on Hessian
+    // sign — which is exactly what we use to decide integration direction.
+    const eps = 0.5;
+
+    let totalAsc = 0, totalDesc = 0;
+    for (const cp of cps) {
+      // For each of the 4 Hessian eigenvectors, seed two streamlines
+      // (cp ± ε·v_k) in the direction set by sign(λ_k).
+      for (let k = 0; k < 4; k++) {
+        const lam = cp.eigvals[k];
+        if (Math.abs(lam) < 1e-9) continue; // degenerate direction; skip
+        const v0 = cp.eigvecs[k * 4 + 0];
+        const v1 = cp.eigvecs[k * 4 + 1];
+        const v2 = cp.eigvecs[k * 4 + 2];
+        const v3 = cp.eigvecs[k * 4 + 3];
+        // Ascending manifold (λ>0): walk along +∇φ. Descending (λ<0): -∇φ.
+        const dirSign = lam > 0 ? +1 : -1;
+        const colorFn = lam > 0 ? _topoColorAsc : _topoColorDesc;
+        if (lam > 0) totalAsc++; else totalDesc++;
+
+        for (const sgn of [+1, -1]) {
+          const sx = cp.x + sgn * eps * v0;
+          const sy = cp.y + sgn * eps * v1;
+          const sz = cp.z + sgn * eps * v2;
+          const sw = cp.w + sgn * eps * v3;
+          if (sx < 0 || sx > 7 || sy < 0 || sy > 7 || sz < 0 || sz > 7 || sw < 0 || sw > 7) continue;
+          const count = _walk(sampleField, sx, sy, sz, sw, dirSign, STEP_COUNT, _topoPath);
+          if (count < 2) continue;
+          const totalSegs = count - 1;
+
+          // Emit segments along the path. Start brightness at the seed
+          // (point 0), fade as we go.
+          let prevWorld = null;
+          for (let i = 0; i < count; i++) {
+            const off = i * 4;
+            const cx = _topoPath[off],     cy = _topoPath[off + 1];
+            const cz = _topoPath[off + 2], cw = _topoPath[off + 3];
+            const world = gfx.boardCoordinates(cx, cy, cz, cw);
+            if (prevWorld) {
+              if (writeIdx / 2 >= maxBufferSegments) break;
+              const t0 = (i - 1) / totalSegs;
+              const t1 = i / totalSegs;
+              const c0 = colorFn(t0);
+              const c1 = colorFn(t1);
+              positions[writeIdx * 3 + 0] = prevWorld.x;
+              positions[writeIdx * 3 + 1] = prevWorld.y + yOffset;
+              positions[writeIdx * 3 + 2] = prevWorld.z;
+              positions[writeIdx * 3 + 3] = world.x;
+              positions[writeIdx * 3 + 4] = world.y + yOffset;
+              positions[writeIdx * 3 + 5] = world.z;
+              colors[writeIdx * 3 + 0] = c0[0]; colors[writeIdx * 3 + 1] = c0[1]; colors[writeIdx * 3 + 2] = c0[2];
+              colors[writeIdx * 3 + 3] = c1[0]; colors[writeIdx * 3 + 4] = c1[1]; colors[writeIdx * 3 + 5] = c1[2];
+              writeIdx += 2;
+            }
+            prevWorld = world;
+          }
+          if (writeIdx / 2 >= maxBufferSegments) break;
+        }
+        if (writeIdx / 2 >= maxBufferSegments) break;
+      }
+      if (writeIdx / 2 >= maxBufferSegments) break;
+    }
+
+    mesh.geometry.setDrawRange(0, writeIdx);
+    mesh.geometry.attributes.position.needsUpdate = true;
+    mesh.geometry.attributes.color.needsUpdate    = true;
+    mesh.geometry.computeBoundingSphere();
+    if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+
+    const cMax = cps.filter(c => c.type === 'max').length;
+    const cMin = cps.filter(c => c.type === 'min').length;
+    const cSad = cps.filter(c => c.type === 'saddle').length;
+    console.log(
+      `[m11.2/filaments] topology mode ch=${chName} ` +
+        `crit-points: ${cps.length} (max=${cMax}, min=${cMin}, saddle=${cSad}) ` +
+        `manifolds: asc=${totalAsc} desc=${totalDesc} ` +
+        `vertices=${writeIdx} (segments=${writeIdx / 2})`
+    );
+  }
+
+  // M11.2: topology-mode color encoding. Hofmann/Rieck/Sadlo convention —
+  // ascending manifolds (λ>0, walking +∇φ) red; descending manifolds
+  // (λ<0, walking -∇φ) blue. Brightness fades from full at the seed
+  // (close to critical point) to half at the far end of the line.
+  function _topoColorAsc(t) {  // red, fading
+    const b = 1.0 - t * 0.45;
+    return [b * 1.0, b * 0.30, b * 0.30];
+  }
+  function _topoColorDesc(t) { // blue, fading
+    const b = 1.0 - t * 0.45;
+    return [b * 0.30, b * 0.45, b * 1.0];
+  }
 
   async function refresh() {
     if (!enabled || !_gameBoard || !_gameBoard.graphics) return;
@@ -199,6 +350,13 @@
     const mesh = _ensureMesh();
     if (!mesh) return;
     try {
+      // M11.2: topology-driven seeding via Topology4D module.
+      // Replaces stride seeding with critical-point-anchored eigenvector
+      // seeds. Lines RED = ascending (λ>0), BLUE = descending (λ<0).
+      if (_topologyMode) {
+        await _refreshTopology(mesh);
+        return;
+      }
       // Pick the field source. Default = STD4 4-vector. Else = gradient
       // of a single scalar channel.
       let sampleField;
@@ -349,6 +507,18 @@
       if (enabled) refresh();
     },
     getChannel() { return _channel; },
+    /**
+     * M11.2: switch between stride-seeded mode (false, default) and
+     * topology-driven Morse-Smale mode (true). Topology mode requires a
+     * scalar channel; STD4 falls back to A1 internally with a console note.
+     */
+    setTopologyMode(on) {
+      const v = !!on;
+      if (v === _topologyMode) return;
+      _topologyMode = v;
+      if (enabled) refresh();
+    },
+    getTopologyMode() { return _topologyMode; },
     init(scene, gameBoard) {
       if (_initRequested) return;
       _initRequested = true;
@@ -356,7 +526,10 @@
       _gameBoard = gameBoard;
       _ensureMesh();
       try {
-        const flag = new URLSearchParams(location.search).get('filaments');
+        const params = new URLSearchParams(location.search);
+        const tFlag = params.get('topology');
+        if (tFlag === '1' || tFlag === 'on') _topologyMode = true;
+        const flag = params.get('filaments');
         if (flag === '1' || flag === 'on') {
           enabled = true;
           if (lineMesh) lineMesh.visible = true;
