@@ -15,14 +15,18 @@
          Loaded as ES modules via import map; legacy r128 examples/js/* paths
          are not in r184. We expose THREE/OrbitControls/OBJLoader as globals
          so the rest of the script-mode codebase doesn't need to change.
-         The .webgpu.min.js bundle is a strict superset that ships both the
-         WebGLRenderer (default) and WebGPURenderer (opt-in via ?gpu=webgpu;
-         M7e). Bundle size cost is modest (~50 KB extra over .module.min.js)
-         for the runtime renderer choice. -->
+         M7e fix-up: the .webgpu.min.js bundle does NOT include the WebGL
+         renderer (it's a WebGPU-only bundle, contrary to what I assumed in
+         M7e). Importing it broke `new THREE.WebGLRenderer(...)` on every
+         page load. Reverted to the WebGL-only .module.min.js bundle; the
+         M7e ?gpu=webgpu code path now silently falls back to WebGL since
+         THREE.WebGPURenderer is undefined in this bundle. Re-implementing
+         WebGPU properly will require a dynamic import of the webgpu module
+         when the URL flag is set, not a wholesale bundle swap. -->
     <script type="importmap">
     {
       "imports": {
-        "three":         "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.min.js",
+        "three":         "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.min.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
       }
     }
@@ -258,6 +262,18 @@
                         Streamline filaments (STD4 vector field)
                     </label>
                 </div>
+                <div class="spectral-control spectral-m10 spectral-filament-params" id="filament-params" hidden>
+                    <div class="filament-slider-row">
+                        <label for="filament-seed-count">Seeds</label>
+                        <input type="range" id="filament-seed-count" min="32" max="512" step="16" value="192">
+                        <span class="filament-value" id="filament-seed-count-value">192</span>
+                    </div>
+                    <div class="filament-slider-row">
+                        <label for="filament-step-count">Steps</label>
+                        <input type="range" id="filament-step-count" min="4" max="40" step="2" value="18">
+                        <span class="filament-value" id="filament-step-count-value">18</span>
+                    </div>
+                </div>
 
                 <!-- M9 help popover: hidden by default, toggled by the ? button. -->
                 <div class="spectral-help" id="spectral-help" hidden>
@@ -375,11 +391,20 @@
             
             <!-- Navigation Controls Overlay -->
             <div class="nav-controls-overlay" id="nav-controls-overlay">
-                <!-- Freeze/Lock Button -->
+                <!-- Freeze/Lock Button — always visible regardless of collapse state -->
                 <button class="nav-btn nav-btn-freeze" id="nav-freeze" title="Freeze/Unfreeze Camera">
                     <span class="nav-label">Freeze</span>
                 </button>
-                
+
+                <!-- Collapsible group: pan / zoom / rotate. Defaults to
+                     collapsed so the on-screen controls don't crowd the
+                     game view. Mouse drag / scroll / keyboard still work
+                     when collapsed. The expand/collapse toggle lives at
+                     the bottom of this group, well away from Freeze, so
+                     a click on the toggle can't be accidentally landed
+                     on the Freeze button. -->
+                <div class="nav-collapsible nav-collapsible--collapsed" id="nav-collapsible">
+
                 <!-- Directional Pan Controls (Arrow Pad) -->
                 <div class="nav-control-group nav-pad-group">
                     <div class="nav-group-label">Pan</div>
@@ -443,8 +468,22 @@
                         </button>
                     </div>
                 </div>
+
+                </div><!-- /.nav-collapsible -->
+
+                <!-- Collapse / expand toggle. Positioned at the BOTTOM of
+                     the overlay (well below Freeze) so misclicks don't
+                     hit the Freeze button. -->
+                <button type="button" class="nav-btn nav-btn-collapse"
+                        id="nav-collapse-toggle"
+                        aria-expanded="false"
+                        aria-controls="nav-collapsible"
+                        title="Show / hide pan, zoom, and rotate controls">
+                    <span class="nav-collapse-icon" aria-hidden="true">▾</span>
+                    <span class="nav-collapse-label">Controls</span>
+                </button>
             </div>
-            
+
             <!-- Loading Screen -->
             <div class="loading-screen" id="loading-screen">
                 <div class="loading-content">
@@ -484,61 +523,77 @@
         </main>
         <!-- Right Panel: Navigation Panel -->
         <aside class="nav-panel" aria-label="4D navigation">
-            <section class="card nav-card">
-                <h3>4D Navigation</h3>
-                
-                <!-- 4D Axes Gizmo -->
-                <div class="gizmo-container">
-                    <canvas id="axes-gizmo-canvas" width="200" height="200"></canvas>
-                    <div class="gizmo-legend">
-                        <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #ff0000;"></span>X: Left-Right</div>
-                        <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #00ff00;"></span>Y: Height</div>
-                        <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #0000ff;"></span>Z: Depth</div>
-                        <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #00ffff;"></span>W: 4D Dimension</div>
+            <section class="card nav-card collapsible-card" data-card-id="nav-card">
+                <header class="card-header">
+                    <h3>4D Navigation</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="nav-card-body" aria-label="Collapse 4D Navigation"
+                            title="Collapse / expand 4D Navigation">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="nav-card-body">
+                    <!-- 4D Axes Gizmo -->
+                    <div class="gizmo-container">
+                        <canvas id="axes-gizmo-canvas" width="200" height="200"></canvas>
+                        <div class="gizmo-legend">
+                            <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #ff0000;"></span>X: Left-Right</div>
+                            <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #00ff00;"></span>Y: Height</div>
+                            <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #0000ff;"></span>Z: Depth</div>
+                            <div class="gizmo-legend-item"><span class="gizmo-color" style="background: #00ffff;"></span>W: 4D Dimension</div>
+                        </div>
                     </div>
-                </div>
-                
-                <!-- Opacity control -->
-                <div class="axis-control">
-                    <label>Board Opacity</label>
-                    <input type="range" id="opacity-slider" min="0" max="100" value="80" class="slider">
-                    <span class="axis-value" id="opacity-value">80%</span>
+
+                    <!-- Opacity control -->
+                    <div class="axis-control">
+                        <label>Board Opacity</label>
+                        <input type="range" id="opacity-slider" min="0" max="100" value="80" class="slider">
+                        <span class="axis-value" id="opacity-value">80%</span>
+                    </div>
                 </div>
             </section>
-            
+
             <!-- Piece Tutorial -->
-            <section class="card tutorial-card">
-                <h3>4D Chess Pieces</h3>
-                
-                <!-- Navigation -->
-                <div class="tutorial-nav">
-                    <button class="btn-nav-small" id="tutorial-prev">◄</button>
-                    <span class="tutorial-page-indicator">
-                        <span id="tutorial-page-number">1</span> / 6
-                    </span>
-                    <button class="btn-nav-small" id="tutorial-next">►</button>
-                </div>
-                
-                <!-- Piece Viewer -->
-                <div class="tutorial-viewer">
-                    <canvas id="tutorial-piece-canvas"></canvas>
-                    <div class="tutorial-controls">
-                        <span class="tutorial-hint">Drag to rotate</span>
+            <section class="card tutorial-card collapsible-card" data-card-id="tutorial-card">
+                <header class="card-header">
+                    <h3>4D Chess Pieces</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="tutorial-card-body" aria-label="Collapse 4D Chess Pieces"
+                            title="Collapse / expand 4D Chess Pieces">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="tutorial-card-body">
+                    <!-- Navigation -->
+                    <div class="tutorial-nav">
+                        <button class="btn-nav-small" id="tutorial-prev">◄</button>
+                        <span class="tutorial-page-indicator">
+                            <span id="tutorial-page-number">1</span> / 6
+                        </span>
+                        <button class="btn-nav-small" id="tutorial-next">►</button>
                     </div>
-                </div>
+
+                    <!-- Piece Viewer -->
+                    <div class="tutorial-viewer">
+                        <canvas id="tutorial-piece-canvas"></canvas>
+                        <div class="tutorial-controls">
+                            <span class="tutorial-hint">Drag to rotate</span>
+                        </div>
+                    </div>
+
+                    <!-- Piece Name -->
+                    <h4 id="tutorial-piece-name" class="tutorial-piece-name">Rook</h4>
+
+                    <!-- Movement Description -->
+                    <div class="tutorial-description" id="tutorial-description">
+                        <!-- Content will be populated by JavaScript -->
+                    </div>
                 
-                <!-- Piece Name -->
-                <h4 id="tutorial-piece-name" class="tutorial-piece-name">Rook</h4>
-                
-                <!-- Movement Description -->
-                <div class="tutorial-description" id="tutorial-description">
-                    <!-- Content will be populated by JavaScript -->
-                </div>
-                
-                <!-- Movement Examples -->
-                <div class="tutorial-examples" id="tutorial-examples">
-                    <!-- Examples will be populated by JavaScript -->
-                </div>
+                    <!-- Movement Examples -->
+                    <div class="tutorial-examples" id="tutorial-examples">
+                        <!-- Examples will be populated by JavaScript -->
+                    </div>
+                </div><!-- /.card-body -->
             </section>
         </aside>
     </div>
@@ -581,6 +636,38 @@
       })();
     </script>
 
+    <!-- M10.2 nav controls collapse toggle. Defaults to collapsed; persists
+         across sessions via localStorage. The Freeze button at the top of
+         the overlay is intentionally outside this collapse so it never
+         disappears, and the toggle button is at the bottom so it''s
+         physically far from Freeze (no misclick collisions). -->
+    <script>
+      (function () {
+        var toggle = document.getElementById('nav-collapse-toggle');
+        var group  = document.getElementById('nav-collapsible');
+        if (!toggle || !group) return;
+        var STORAGE_KEY = 'chess4d-oc.nav-collapsed';
+        function setCollapsed(collapsed) {
+          if (collapsed) {
+            group.classList.add('nav-collapsible--collapsed');
+            toggle.setAttribute('aria-expanded', 'false');
+          } else {
+            group.classList.remove('nav-collapsible--collapsed');
+            toggle.setAttribute('aria-expanded', 'true');
+          }
+          try { localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); } catch (_) { /* private mode */ }
+        }
+        // Read persisted preference; default to collapsed if absent.
+        var persisted = null;
+        try { persisted = localStorage.getItem(STORAGE_KEY); } catch (_) {}
+        setCollapsed(persisted === null ? true : persisted === '1');
+        toggle.addEventListener('click', function () {
+          var nowCollapsed = !group.classList.contains('nav-collapsible--collapsed');
+          setCollapsed(nowCollapsed);
+        });
+      })();
+    </script>
+
     <!-- M10: board-signature heat map + filament UI bindings. Wait for
          chess4d-app-ready so SpectralHeatmap / SpectralFilaments globals
          exist (they're loaded by the dynamic-script chain in head). -->
@@ -588,7 +675,6 @@
       window.addEventListener('chess4d-app-ready', function () {
         var sigSelect = document.getElementById('board-signature');
         if (sigSelect) {
-          // Reflect URL flag into the dropdown if user landed with ?heatmap=...
           try {
             var hf = new URLSearchParams(location.search).get('heatmap');
             if (hf && hf !== 'off') sigSelect.value = hf;
@@ -605,17 +691,83 @@
           });
         }
         var filCheck = document.getElementById('board-filaments');
+        var filParams = document.getElementById('filament-params');
+        var filSeedSlider = document.getElementById('filament-seed-count');
+        var filSeedValue  = document.getElementById('filament-seed-count-value');
+        var filStepSlider = document.getElementById('filament-step-count');
+        var filStepValue  = document.getElementById('filament-step-count-value');
+        function applyFilParams() {
+          if (!window.SpectralFilaments) return;
+          window.SpectralFilaments.setParams({
+            seedCount: filSeedSlider ? parseInt(filSeedSlider.value, 10) : undefined,
+            stepCount: filStepSlider ? parseInt(filStepSlider.value, 10) : undefined,
+          });
+        }
         if (filCheck) {
           try {
             var ff = new URLSearchParams(location.search).get('filaments');
             if (ff === '1' || ff === 'on') filCheck.checked = true;
           } catch (_) {}
+          // Show/hide param sliders to mirror the checkbox.
+          function syncFilParamsVisibility() {
+            if (!filParams) return;
+            if (filCheck.checked) filParams.removeAttribute('hidden');
+            else filParams.setAttribute('hidden', '');
+          }
+          syncFilParamsVisibility();
           filCheck.addEventListener('change', function () {
             if (!window.SpectralFilaments) return;
             window.SpectralFilaments.setEnabled(filCheck.checked);
+            syncFilParamsVisibility();
           });
         }
+        if (filSeedSlider && filSeedValue) {
+          filSeedSlider.addEventListener('input', function () {
+            filSeedValue.textContent = filSeedSlider.value;
+          });
+          filSeedSlider.addEventListener('change', applyFilParams);
+        }
+        if (filStepSlider && filStepValue) {
+          filStepSlider.addEventListener('input', function () {
+            filStepValue.textContent = filStepSlider.value;
+          });
+          filStepSlider.addEventListener('change', applyFilParams);
+        }
       });
+    </script>
+
+    <!-- Right-panel collapsible cards (4D Navigation, 4D Chess Pieces).
+         Same pattern as the on-screen nav-controls collapse: click the
+         chevron, body collapses; localStorage persists per card-id. -->
+    <script>
+      (function () {
+        var STORAGE_PREFIX = 'chess4d-oc.card-collapsed.';
+        document.querySelectorAll('.collapsible-card').forEach(function (card) {
+          var id = card.getAttribute('data-card-id');
+          var btn = card.querySelector('.card-collapse-btn');
+          var body = card.querySelector('.card-body');
+          if (!id || !btn || !body) return;
+          var key = STORAGE_PREFIX + id;
+          function setCollapsed(collapsed) {
+            if (collapsed) {
+              body.classList.add('card-body--collapsed');
+              btn.setAttribute('aria-expanded', 'false');
+            } else {
+              body.classList.remove('card-body--collapsed');
+              btn.setAttribute('aria-expanded', 'true');
+            }
+            try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch (_) {}
+          }
+          var persisted = null;
+          try { persisted = localStorage.getItem(key); } catch (_) {}
+          // Default expanded (persisted === null); user-collapsed sticks.
+          setCollapsed(persisted === '1');
+          btn.addEventListener('click', function () {
+            var nowCollapsed = !body.classList.contains('card-body--collapsed');
+            setCollapsed(nowCollapsed);
+          });
+        });
+      })();
     </script>
 </body>
 </html>
