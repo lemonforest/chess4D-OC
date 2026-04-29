@@ -167,30 +167,39 @@
         <!-- Left Panel: Control Panel -->
         <aside class="control-panel" aria-label="Game controls">
             <!-- Game Status -->
-            <section class="card status-card">
-                <h3>Game Status</h3>
-                <ul>
-                    <li>Turn: <span id="turn-number">1</span></li>
-                    <li>Player: <span id="current-player">White</span></li>
-                    <li>Status: <span id="check-status">No check</span></li>
-                </ul>
-                
-                <!-- Selected Piece Info Display -->
-                <div class="piece-info-container" id="piece-info-container" style="display: none;">
-                    <div class="piece-info-header">
-                        <strong id="piece-info-name">-</strong>
-                    </div>
-                    <div class="piece-info-position">
-                        <div class="position-label">Position:</div>
-                        <div class="position-coords">
-                            <span class="coord-item">X:<span id="piece-info-x">-</span></span>, <span class="coord-item">Y:<span id="piece-info-y">-</span></span>, <span class="coord-item">Z:<span id="piece-info-z">-</span></span>, <span class="coord-item">W:<span id="piece-info-w">-</span></span>
+            <section class="card status-card collapsible-card" data-card-id="status-card">
+                <header class="card-header">
+                    <h3>Game Status</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="status-card-body" aria-label="Collapse Game Status"
+                            title="Collapse / expand Game Status">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="status-card-body">
+                    <ul>
+                        <li>Turn: <span id="turn-number">1</span></li>
+                        <li>Player: <span id="current-player">White</span></li>
+                        <li>Status: <span id="check-status">No check</span></li>
+                    </ul>
+
+                    <!-- Selected Piece Info Display -->
+                    <div class="piece-info-container" id="piece-info-container" style="display: none;">
+                        <div class="piece-info-header">
+                            <strong id="piece-info-name">-</strong>
                         </div>
-                    </div>
-                    <div class="piece-info-moves-header">
-                        <strong>Possible Moves:</strong>
-                    </div>
-                    <div class="piece-info-moves-list" id="piece-info-moves-list">
-                        <!-- Moves will be populated by JavaScript -->
+                        <div class="piece-info-position">
+                            <div class="position-label">Position:</div>
+                            <div class="position-coords">
+                                <span class="coord-item">X:<span id="piece-info-x">-</span></span>, <span class="coord-item">Y:<span id="piece-info-y">-</span></span>, <span class="coord-item">Z:<span id="piece-info-z">-</span></span>, <span class="coord-item">W:<span id="piece-info-w">-</span></span>
+                            </div>
+                        </div>
+                        <div class="piece-info-moves-header">
+                            <strong>Possible Moves:</strong>
+                        </div>
+                        <div class="piece-info-moves-list" id="piece-info-moves-list">
+                            <!-- Moves will be populated by JavaScript -->
+                        </div>
                     </div>
                 </div>
             </section>
@@ -206,13 +215,21 @@
             </section>
             
             <!-- Spectral Overlay (M5+) -->
-            <section class="card spectral-card">
+            <section class="card spectral-card collapsible-card" data-card-id="spectral-card">
                 <div class="spectral-header">
                     <h3>Spectral Overlay</h3>
-                    <button type="button" class="spectral-help-btn" id="spectral-help-btn"
-                            aria-label="What is this?" aria-expanded="false"
-                            aria-controls="spectral-help">?</button>
+                    <span style="display:flex; gap:6px;">
+                        <button type="button" class="spectral-help-btn" id="spectral-help-btn"
+                                aria-label="What is this?" aria-expanded="false"
+                                aria-controls="spectral-help">?</button>
+                        <button type="button" class="card-collapse-btn" aria-expanded="true"
+                                aria-controls="spectral-card-body" aria-label="Collapse Spectral Overlay"
+                                title="Collapse / expand Spectral Overlay">
+                            <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                        </button>
+                    </span>
                 </div>
+                <div class="card-body" id="spectral-card-body">
                 <div class="spectral-control">
                     <label for="spectral-channel">Channel:</label>
                     <select id="spectral-channel" aria-label="Spectral channel for hover overlay">
@@ -554,135 +571,192 @@
 
                     <p class="spectral-help-foot">Math: see <a href="https://doi.org/10.3390/appliedmath6030048" target="_blank" rel="noopener">Oana &amp; Chiru (2026)</a>, the <a href="https://pypi.org/project/chess-spectral/" target="_blank" rel="noopener">chess-spectral</a> docs, and <a href="https://bastian.rieck.me/research/EuroVis2018_4D.pdf" target="_blank" rel="noopener">Hofmann/Rieck/Sadlo (2018)</a> for the 4D topology approach. URL flag inventory in the README. Phase-operator math in the README's Phase-Domain Counterpart section.</p>
                 </div>
+                </div><!-- /.card-body (spectral-card) — M11.22 -->
             </section>
 
             <!-- Bot Strategy (M13.2) — pick a different decision matrix
                  per side for testing. Live-updates via Bot.setStrategy
                  on change. Hidden if there are no bots in the game (no
                  effect in Two Players mode). -->
-            <section class="card bot-strategy-card">
-                <h3>Bot Strategy</h3>
-                <div class="spectral-control">
-                    <label for="bot-strategy-white">White:</label>
-                    <select id="bot-strategy-white" aria-label="White bot strategy"
-                            title="Pick the decision matrix for the WHITE bot. Switching live affects the next move.">
-                    </select>
+            <section class="card bot-strategy-card collapsible-card" data-card-id="bot-strategy-card">
+                <header class="card-header">
+                    <h3>Bot Strategy</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="bot-strategy-card-body" aria-label="Collapse Bot Strategy"
+                            title="Collapse / expand Bot Strategy">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="bot-strategy-card-body">
+                    <div class="spectral-control">
+                        <label for="bot-strategy-white">White:</label>
+                        <select id="bot-strategy-white" aria-label="White bot strategy"
+                                title="Pick the decision matrix for the WHITE bot. Switching live affects the next move.">
+                        </select>
+                    </div>
+                    <div class="spectral-control">
+                        <label for="bot-strategy-black">Black:</label>
+                        <select id="bot-strategy-black" aria-label="Black bot strategy"
+                                title="Pick the decision matrix for the BLACK bot. Switching live affects the next move.">
+                        </select>
+                    </div>
+                    <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
+                        Different strategies = different play styles. Try ``smart`` vs ``aggressive`` for a real game; try ``random`` as a control.
+                    </p>
                 </div>
-                <div class="spectral-control">
-                    <label for="bot-strategy-black">Black:</label>
-                    <select id="bot-strategy-black" aria-label="Black bot strategy"
-                            title="Pick the decision matrix for the BLACK bot. Switching live affects the next move.">
-                    </select>
-                </div>
-                <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
-                    Different strategies = different play styles. Try ``smart`` vs ``aggressive`` for a real game; try ``random`` as a control.
-                </p>
             </section>
 
             <!-- Action Buttons -->
-            <section class="card actions-card">
-                <h3>Actions</h3>
-                <button class="btn btn-primary btn-large" id="new-game-btn">
-                    <span class="new-game-icon">⟲</span> NEW GAME
-                </button>
-                <div class="btn-group">
-                    <button class="btn btn-secondary" id="undo-btn">
-                        ↶ UNDO
+            <section class="card actions-card collapsible-card" data-card-id="actions-card">
+                <header class="card-header">
+                    <h3>Actions</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="actions-card-body" aria-label="Collapse Actions"
+                            title="Collapse / expand Actions">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
                     </button>
-                    <button class="btn btn-secondary" id="redo-btn">
-                        ↷ REDO
+                </header>
+                <div class="card-body" id="actions-card-body">
+                    <button class="btn btn-primary btn-large" id="new-game-btn">
+                        <span class="new-game-icon">⟲</span> NEW GAME
                     </button>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" id="undo-btn">
+                            ↶ UNDO
+                        </button>
+                        <button class="btn btn-secondary" id="redo-btn">
+                            ↷ REDO
+                        </button>
+                    </div>
+                    <!-- M11.6: export the current game state + move history as
+                         a JSON file in chess-spectral's JSONL-fixture format. -->
+                    <button class="btn btn-secondary btn-block" id="export-game-btn"
+                            title="Download the current position + move history as a JSON file.">
+                        ⬇ Export game (JSON)
+                    </button>
+                    <!-- M11.6.1: load a previously-exported game. -->
+                    <button class="btn btn-secondary btn-block" id="load-game-btn"
+                            title="Load a previously-exported game JSON.">
+                        ⬆ Load game (JSON)
+                    </button>
+                    <input type="file" id="load-game-file" accept=".json,application/json" style="display: none;">
                 </div>
-                <!-- M11.6: export the current game state + move history as
-                     a JSON file in chess-spectral's JSONL-fixture format
-                     (a `pieces` object mapping square index → piece value)
-                     plus a `moves` array. Round-trips through
-                     `chess_spectral.encoder_4d` for analysis. -->
-                <button class="btn btn-secondary btn-block" id="export-game-btn"
-                        title="Download the current position + move history as a JSON file. Pieces are in chess-spectral's JSONL fixture format (square_int → piece-letter); moves array gives the from/to coordinates of every move played.">
-                    ⬇ Export game (JSON)
-                </button>
-                <!-- M11.6.1: load a previously-exported game. Replays the
-                     moves array through the existing moveManager.move chain
-                     (which fires bridge.applyMove + spectral overlay
-                     refresh), so the live state matches the loaded game
-                     exactly. -->
-                <button class="btn btn-secondary btn-block" id="load-game-btn"
-                        title="Load a previously-exported game JSON. Replays every move from the file's moves array on top of a fresh starting position. Live state will match the loaded game.">
-                    ⬆ Load game (JSON)
-                </button>
-                <input type="file" id="load-game-file" accept=".json,application/json" style="display: none;">
             </section>
-            
+
             <!-- Statistics -->
-            <section class="card stats-card">
-                <h3>Statistics</h3>
-                <div class="stat-row">
-                    <span>White pieces:</span>
-                    <span id="white-count" class="stat-value">448</span>
-                </div>
-                <div class="stat-row">
-                    <span>Black pieces:</span>
-                    <span id="black-count" class="stat-value">448</span>
-                </div>
-                <div class="stat-row">
-                    <span>Time elapsed:</span>
-                    <span id="game-time" class="stat-value">00:00</span>
+            <section class="card stats-card collapsible-card" data-card-id="stats-card">
+                <header class="card-header">
+                    <h3>Statistics</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="stats-card-body" aria-label="Collapse Statistics"
+                            title="Collapse / expand Statistics">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="stats-card-body">
+                    <div class="stat-row">
+                        <span>White pieces:</span>
+                        <span id="white-count" class="stat-value">448</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Black pieces:</span>
+                        <span id="black-count" class="stat-value">448</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Time elapsed:</span>
+                        <span id="game-time" class="stat-value">00:00</span>
+                    </div>
                 </div>
             </section>
-            
+
             <!-- Move History -->
-            <section class="card history-card">
-                <h3>Move History</h3>
-                <div class="move-list" id="move-history">
-                    <div class="move-item">Game started...</div>
+            <section class="card history-card collapsible-card" data-card-id="history-card">
+                <header class="card-header">
+                    <h3>Move History</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="history-card-body" aria-label="Collapse Move History"
+                            title="Collapse / expand Move History">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="history-card-body">
+                    <div class="move-list" id="move-history">
+                        <div class="move-item">Game started...</div>
+                    </div>
                 </div>
             </section>
-            
+
             <!-- Camera -->
-            <section class="card camera-card">
-                <h3>Camera</h3>
-                <button class="btn btn-secondary btn-block" id="reset-camera">
-                    ◎ Reset View
-                </button>
-                <button class="btn btn-secondary btn-block" id="top-view">
-                    ↑ Top View
-                </button>
-                <button class="btn btn-secondary btn-block" id="side-view">
-                    → Side View
-                </button>
+            <section class="card camera-card collapsible-card" data-card-id="camera-card">
+                <header class="card-header">
+                    <h3>Camera</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="camera-card-body" aria-label="Collapse Camera"
+                            title="Collapse / expand Camera">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="camera-card-body">
+                    <button class="btn btn-secondary btn-block" id="reset-camera">
+                        ◎ Reset View
+                    </button>
+                    <button class="btn btn-secondary btn-block" id="top-view">
+                        ↑ Top View
+                    </button>
+                    <button class="btn btn-secondary btn-block" id="side-view">
+                        → Side View
+                    </button>
+                </div>
             </section>
-            
+
             <!-- Mouse Controls -->
-            <section class="card help-card">
-                <h3>Mouse Controls</h3>
-                <div class="shortcut-list">
-                    <div class="shortcut-item">
-                        <span class="key">Left Click</span>
-                        <span>Rotate view</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <span class="key">Right Click</span>
-                        <span>Pan (move view)</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <span class="key">Scroll</span>
-                        <span>Zoom in/out</span>
+            <section class="card help-card collapsible-card" data-card-id="help-mouse-card">
+                <header class="card-header">
+                    <h3>Mouse Controls</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="help-mouse-card-body" aria-label="Collapse Mouse Controls"
+                            title="Collapse / expand Mouse Controls">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="help-mouse-card-body">
+                    <div class="shortcut-list">
+                        <div class="shortcut-item">
+                            <span class="key">Left Click</span>
+                            <span>Rotate view</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Right Click</span>
+                            <span>Pan (move view)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Scroll</span>
+                            <span>Zoom in/out</span>
+                        </div>
                     </div>
                 </div>
             </section>
             
             <!-- Keyboard Shortcuts Help -->
-            <section class="card help-card">
-                <h3>Keyboard</h3>
-                <div class="shortcut-list">
-                    <div class="shortcut-item">
-                        <span class="key">R</span>
-                        <span>Reset camera</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <span class="key">ESC</span>
-                        <span>Deselect piece</span>
+            <section class="card help-card collapsible-card" data-card-id="help-keyboard-card">
+                <header class="card-header">
+                    <h3>Keyboard</h3>
+                    <button type="button" class="card-collapse-btn" aria-expanded="true"
+                            aria-controls="help-keyboard-card-body" aria-label="Collapse Keyboard"
+                            title="Collapse / expand Keyboard">
+                        <span class="card-collapse-icon" aria-hidden="true">▾</span>
+                    </button>
+                </header>
+                <div class="card-body" id="help-keyboard-card-body">
+                    <div class="shortcut-list">
+                        <div class="shortcut-item">
+                            <span class="key">R</span>
+                            <span>Reset camera</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">ESC</span>
+                            <span>Deselect piece</span>
+                        </div>
                     </div>
                 </div>
             </section>

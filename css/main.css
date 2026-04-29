@@ -1733,9 +1733,16 @@ body {
    SPECTRAL OVERLAY CONTROL (M5)
    ============================================ */
 .spectral-card .spectral-control {
+    /* M11.22 fix: wrap label + control to a column so the <select>
+       widgets don't overflow the panel edge into the canvas area when
+       the panel is narrow. Each control row stacks: label → input
+       below → small gap to next row. Checkbox-only rows still read
+       fine in column form because the label visually contains the
+       checkbox via parent <label> wrap. */
     display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
     margin-bottom: var(--spacing-sm);
 }
 .spectral-card .spectral-control label {
@@ -1744,7 +1751,10 @@ body {
     flex-shrink: 0;
 }
 .spectral-card .spectral-control select {
-    flex: 1;
+    /* M11.22: width 100% of the (column-flex) parent so it fills the
+       panel width but doesn't overflow. */
+    width: 100%;
+    box-sizing: border-box;
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--bg-tertiary);
@@ -2025,9 +2035,12 @@ body {
    blocked by hasLegalMoves / inCheck loops. Show via
    `_showThinking(text)`, hide via `_hideThinking()`. */
 .thinking-indicator {
+    /* M11.22 fix: positioned bottom-right so it never overlaps the
+       header's Feedback / Tutorial buttons (header lives at top, top-
+       right area is for buttons + turn indicator). */
     position: fixed;
-    top: 12px;
-    right: 12px;
+    bottom: 16px;
+    right: 16px;
     background: rgba(20, 25, 51, 0.92);
     color: var(--accent-primary);
     padding: 8px 14px;
@@ -2041,6 +2054,13 @@ body {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     pointer-events: none;
     user-select: none;
+}
+/* M11.22 fix: HTML `hidden` attribute defaults to `display: none` but
+   our `display: flex` rule above wins the cascade — leaving the
+   indicator visible on page load when the element is `<div hidden>`.
+   Explicit override restores the expected hide-by-default behavior. */
+.thinking-indicator[hidden] {
+    display: none;
 }
 .thinking-indicator-spinner {
     width: 12px;
