@@ -37,31 +37,13 @@
   // never reads them back — the InstancedMesh matrices are set once in
   // buildMesh and refresh() only updates colors, not positions. Removed.
 
-  // Viridis-ish ramp — copy of spectral_heatmap.js so the modules stay
-  // independent (heatmap might evolve to a custom ramp later).
-  function viridisColor(t) {
-    if (t < 0.25) {
-      const u = t / 0.25;
-      return [0.10, 0.18 + u * 0.42, 0.55 + u * 0.45];
-    } else if (t < 0.5) {
-      const u = (t - 0.25) / 0.25;
-      return [0.10 + u * 0.05, 0.60 + u * 0.30, 1.00 - u * 0.50];
-    } else if (t < 0.75) {
-      const u = (t - 0.5) / 0.25;
-      return [0.15 + u * 0.65, 0.90 - u * 0.10, 0.50 - u * 0.40];
-    } else {
-      const u = (t - 0.75) / 0.25;
-      return [0.80 + u * 0.20, 0.80 - u * 0.55, 0.10];
-    }
-  }
-
-  // 5/95 percentile clip — robust to single-cell outliers (same as the M11.1
-  // heatmap normalization).
-  function _percentileBounds(arr, lo, hi) {
-    const sorted = new Float32Array(arr).sort();
-    const n = sorted.length;
-    return [sorted[Math.floor(lo * n)], sorted[Math.min(n - 1, Math.floor(hi * n))]];
-  }
+  // Viridis ramp + percentile-clip helper come from window.SpectralColor
+  // (js/spectral_color.js, M11.23). Heatmap, board-tint, dot-plot, and the
+  // overlay all share the same colormap so cross-display comparisons stay
+  // calibrated. If we ever want a different ramp here, branch off in the
+  // SSOT module rather than re-introducing a copy.
+  const viridisColor      = (window.SpectralColor && window.SpectralColor.viridisColor);
+  const _percentileBounds = (window.SpectralColor && window.SpectralColor.percentileBounds);
 
   function buildMesh() {
     if (im) return im;
