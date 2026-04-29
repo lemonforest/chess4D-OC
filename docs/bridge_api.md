@@ -14,7 +14,7 @@ The user said: *"we'll need to see what we opened up api wise and what we find w
 
 ---
 
-## Currently exposed (19 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26 + 2 from M11.27)
+## Currently exposed (20 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26 + 2 from M11.27 + 1 from M11.28)
 
 All methods return `Promise`s. The bridge serializes mutations through `applyChain` so move-applying methods don't race.
 
@@ -39,10 +39,11 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getFen4State()` *(M11.26)* | — | `{ ok, fen4 }` | (M11.6 export refactor pending) | Best-effort v1 serializer; probes upstream + hand-rolled fallback |
 | `getQmState(opts?)` *(M11.27)* | `{ sideToMove?: bool }` | `{ ok, psi: Float32Array(90112), basisDim: 45056, normSq }` | (M14.x viz pending) | ψ as real+imag interleaved Float32; `psi[2k]=Re`, `psi[2k+1]=Im` |
 | `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | (M14.1 viz pending) | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
+| `applyMoveQm(origin, dest)` *(M11.28)* | `{x,y,z,w}` × 2 | `{ ok, psi: Float32Array(90112), basisDim, normSq }` | (M14.x preview overlays pending) | PREVIEW-style — returns ψ_post, doesn't mutate chess4d state |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
-`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`, `getQmState`, `getQmDensity`.
+`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`, `getQmState`, `getQmDensity`, `applyMoveQm`.
 
 ---
 
@@ -88,7 +89,7 @@ Tied to the design in `docs/qm_4d_design.md`. Lights up the M14.x visualization 
 |---|---|---|---|
 | `getQmState()` | `qm_4d_bridge.get_qm_state` | **Wired in M11.27** ✅ | Returns `psi` as Float32 length 90112 (real+imag interleaved); `basisDim=45056`; `normSq` |
 | `getQmDensity(pieceId?)` | `qm_4d_bridge.get_qm_density` | **Wired in M11.27** ✅ | Returns `density: Float32Array(4096)` summing `\|ψ\|²` over channels |
-| `applyMoveQm(origin, dest)` | `qm_4d_bridge.apply_move_qm` / `apply_move_qm_full` | M11.28 | `_full` variant returns assembled ψ_post; both available |
+| `applyMoveQm(origin, dest)` | `qm_4d_bridge.apply_move_qm_full` | **Wired in M11.28** ✅ | PREVIEW-style: returns ψ_post but does NOT mutate chess4d.GameState. The classical advance still happens through applyMove() |
 | `measureAt(coords, observable?)` | `qm_4d_bridge.measure_at` | M11.28 | Born-rule projective measurement |
 | `getDensityMatrixOf(pieceId)` | `qm_4d_bridge.get_density_matrix_of` | M11.28 | For entanglement viz |
 | `getProbabilityCurrent()` | `qm_4d_bridge.get_probability_current` | M11.28 | `j_p(c) = Im(ψ* ∇ψ)` field for QM filaments |
