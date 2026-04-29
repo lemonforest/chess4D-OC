@@ -119,6 +119,16 @@
 
     <!-- Optional debug status (toggled visible via ?debug=1 in main.js) -->
     <div id="engine-debug-status"></div>
+
+    <!-- M11.17: busy "thinking" indicator. Shown by main.js helpers
+         while a long sync operation runs (legal-move scan, win-condition
+         check). The spinner CSS animation is composited on the GPU
+         thread, so it keeps animating even when the JS main thread is
+         blocked. -->
+    <div class="thinking-indicator" id="thinking-indicator" role="status" aria-live="polite" hidden>
+      <span class="thinking-indicator-spinner" aria-hidden="true"></span>
+      <span class="thinking-indicator-text" id="thinking-indicator-text">Computing&hellip;</span>
+    </div>
     <!-- Header Bar -->
     <header class="header-bar">
         <h1 class="title">

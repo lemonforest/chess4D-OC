@@ -2014,3 +2014,45 @@ body {
     margin-top: 0;
     pointer-events: none;
 }
+
+/* ============================================
+   M11.17 — busy "thinking" indicator (compositor-animated)
+   ============================================
+   Pops up at top-right while a long sync operation runs
+   (legal-move scan, win-condition check). The CSS animation is
+   composited on the GPU thread (`will-change: transform`) so
+   the spinner keeps spinning even when the JS main thread is
+   blocked by hasLegalMoves / inCheck loops. Show via
+   `_showThinking(text)`, hide via `_hideThinking()`. */
+.thinking-indicator {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    background: rgba(20, 25, 51, 0.92);
+    color: var(--accent-primary);
+    padding: 8px 14px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 9000;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    user-select: none;
+}
+.thinking-indicator-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(0, 212, 255, 0.3);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: thinking-spin 1s linear infinite;
+    /* Force GPU compositor so the animation runs even when the JS main
+       thread is blocked by a synchronous heavy computation. */
+    will-change: transform;
+}
+@keyframes thinking-spin {
+    to { transform: rotate(360deg); }
+}

@@ -2299,9 +2299,60 @@ function hidePieceInfoDisplay() {
     }
 }
 
+// ─── M11.17: 'busy / thinking' indicator helpers ────────────────────────
+// Shown while a long synchronous computation runs (legal-move scan,
+// checkmate check). The spinner's CSS animation is GPU-composited so it
+// keeps animating even when the main thread is blocked. Pattern:
+//
+//   _showThinking('Computing legality…');
+//   await new Promise(r => setTimeout(r, 0));   // yield once for paint
+//   const result = doExpensiveSyncWork();
+//   _hideThinking();
+//
+// Or use _runWithThinking(text, fn) which wraps the pattern.
+function _showThinking(text) {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('thinking-indicator');
+    if (!el) return;
+    if (text) {
+        const t = document.getElementById('thinking-indicator-text');
+        if (t) t.textContent = text;
+    }
+    el.removeAttribute('hidden');
+}
+function _hideThinking() {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('thinking-indicator');
+    if (el) el.setAttribute('hidden', '');
+}
+// Defer-then-run wrapper. setTimeout(0) lets the browser paint the
+// spinner BEFORE we re-block the main thread with the sync work. The
+// callback's return value is discarded — caller should only use this
+// for fire-and-forget side-effecting work.
+function _runWithThinking(text, syncWorkFn) {
+    _showThinking(text);
+    setTimeout(function () {
+        try { syncWorkFn(); }
+        finally { _hideThinking(); }
+    }, 0);
+}
+if (typeof window !== 'undefined') {
+    window._showThinking = _showThinking;
+    window._hideThinking = _hideThinking;
+    window._runWithThinking = _runWithThinking;
+}
+
 function checkWinCondition() {
     if (!gameBoard || !moveManager) return;
-    
+    // M11.17: defer the sync win-check via the busy indicator so the
+    // spinner paints before hasLegalMoves potentially blocks the main
+    // thread for hundreds of ms (real checkmate detection).
+    _runWithThinking('Checking for checkmate…', _checkWinConditionSync);
+}
+
+function _checkWinConditionSync() {
+    if (!gameBoard || !moveManager) return;
+
     const winStatus = gameBoard.winCondition();
     const modal = document.getElementById('game-over-modal');
     const modalTitle = document.getElementById('game-over-title');
