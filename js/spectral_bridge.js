@@ -183,6 +183,19 @@
     // is still the cleanest way to enumerate the canonical starting position.
     listInitialPieces: () => call('listInitialPieces'),
     legalMovesAtInitial: (origin) => call('legalMovesAtInitial', origin),
+
+    // ───────────────────────────────────────────────────────────────
+    // chess-spectral 1.5 §17.5 dev/debug surface (M11.25)
+    // ───────────────────────────────────────────────────────────────
+
+    // Clean { ok, version, source? } — replaces grepping the micropip
+    // output for the chess-spectral version.
+    getVersion: () => call('getVersion'),
+
+    // 11-channel encoder layout: { ok, totalDim, channels: [{name, offset, dim}, ...] }.
+    // Cache this once at boot — it's runtime-invariant for a given
+    // chess-spectral version.
+    getEncoderShape: () => call('getEncoderShape'),
   };
   window.SpectralBridge = bridge;
 
