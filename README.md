@@ -43,6 +43,8 @@ For deeper detail, see [CLAUDE.md](CLAUDE.md) and [NOTICE](NOTICE).
 
 The fork exposes runtime flags via URL query parameters. Defaults are chosen so the page works smoothly on commodity hardware; flags let you opt into experimental paths.
 
+**Engine + rendering:**
+
 | Param | Values | Default | Effect |
 |---|---|---|---|
 | `?quality=` | `low`, `high` | **`low`** | Asset detail. `low` loads decimated OBJs (~80 % fewer triangles, the file set in `js/pieces/obj_pieces_lowpoly/`); `high` loads the originals. The originals crash Chrome on some older laptops with 896 pieces in scene. |
@@ -52,7 +54,24 @@ The fork exposes runtime flags via URL query parameters. Defaults are chosen so 
 | `?legalityOps=` | `spatial`, `phase` | `spatial` | When the worker computes legal moves, choose the chess-spectral backend. Both produce the same result; differs in geometric (spatial) vs Fourier-domain (phase) implementation. Falls back to spatial if the phase module isn't importable. |
 | `?debug=1` | (presence) | off | Shows a fixed-position engine-status overlay in the bottom-left (chess-spectral / chess4d versions, MODULUS_4D, initial-position piece count). |
 
-Combine freely, e.g. `?quality=high&renderer=instanced&gpu=webgpu&legalityOps=phase&debug=1` for the full opt-in experimental stack.
+**Spectral visualization layers (M10 → M11.3.x):**
+
+| Param | Values | Default | Effect |
+|---|---|---|---|
+| `?heatmap=` | `off`, `A1`, `STD4_X`, `STD4_Y`, `STD4_Z`, `STD4_W`, `FIB_SYM_1`, `FIB_SYM_2`, `FIB_SYM_3`, `FA_PAWN_W`, `FA_PAWN_Y`, `FD_DIAG` | `off` | Volumetric cloud — paints the entire 4D lattice with the chosen channel. Per-cell scale modulated by intensity, refreshed only on real moves. |
+| `?heatmapTransform=` | `linear`, `log1p` | `linear` | Apply `sign(x)·log1p(|x|)` to compress heavy-tailed channels. |
+| `?heatmapMode=` | `unipolar`, `signed` | `unipolar` | `signed` swaps the viridis ramp for diverging blue→white→red and tracks `|value|` for height — best for STD4 channels. |
+| `?heatmapMaxima=` | `1`, `on`, off | off | Bright spheres at strict 4D local maxima (face-neighbor test). |
+| `?heatmapSlice=` | `axis:value`, e.g. `w:4` | off | Pin one of x/y/z/w to a value 0..7 — collapses the 4D cloud to a 3D cross-section. |
+| `?heatmapThreshold=` | `0.0` … `1.0` | `0` | Hide cells below this normalized intensity. Sweeps "percentile shells". |
+| `?heatmapClip=` | `mode:radius`, e.g. `peak:6` | off | 4D clipping sphere. `mode` ∈ {`off`, `center`, `peak`, `click`}; `radius` ∈ 0..14. Restricts the cloud to a 4D ball around the chosen reference. |
+| `?filaments=` | `1`, `on`, off | off | Streamline filaments — field lines through the active channel. |
+| `?topology=` | `1`, `on`, off | off | Morse–Smale topology mode. Filaments seed at critical points along Hessian eigenvectors, colored by ascending (red, λ>0) / descending (blue, λ<0) manifold. Replaces stride seeding. |
+
+Combine freely. Examples:
+- `?quality=high&renderer=instanced&legalityOps=phase&debug=1` — full opt-in experimental stack
+- `?heatmap=A1&heatmapMaxima=1&filaments=1&topology=1` — full spectral viz: cloud + peaks + Morse–Smale filaments
+- `?heatmap=A1&heatmapTransform=log1p&heatmapMode=signed&heatmapSlice=w:4&heatmapClip=peak:5&heatmapThreshold=0.5` — log-compressed signed channel A1 sliced at w=4, clipped to 4D distance 5 from the peak, top-50% intensity only
 
 ---
 
