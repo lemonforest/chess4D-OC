@@ -329,6 +329,29 @@
                         <span class="filament-value" id="heatmap-threshold-display">0%</span>
                     </div>
                 </div>
+                <!-- M11.3.2: 4D clipping sphere. Hides cells whose 4D
+                     Euclidean distance from the chosen reference exceeds
+                     the radius. Center = lattice middle (3.5,3.5,3.5,3.5);
+                     Peak = brightest cell each refresh; Click = use the
+                     pinned 4D coords (unused by UI yet — set via console
+                     SpectralHeatmap.setClipPin([x,y,z,w])). -->
+                <div class="spectral-control spectral-m10">
+                    <label for="heatmap-clip-mode">Clip sphere:</label>
+                    <select id="heatmap-clip-mode" aria-label="4D clipping sphere reference"
+                            title="Restrict the cloud to a 4D ball around a reference point. Helps cut through projection clutter and focus on local structure.">
+                        <option value="off" selected>Off</option>
+                        <option value="center">Center (lattice midpoint)</option>
+                        <option value="peak">Peak (brightest cell)</option>
+                        <option value="click">Click pin (set via console)</option>
+                    </select>
+                </div>
+                <div class="spectral-control spectral-m10 spectral-filament-params" id="heatmap-clip-row" hidden>
+                    <div class="filament-slider-row">
+                        <label for="heatmap-clip-radius" title="4D Euclidean radius of the clipping ball. Soft-falloff in the outer 10%.">Radius</label>
+                        <input type="range" id="heatmap-clip-radius" min="1" max="14" step="0.5" value="7">
+                        <span class="filament-value" id="heatmap-clip-radius-display">7.0</span>
+                    </div>
+                </div>
                 <div class="spectral-control spectral-m10 spectral-filament-params" id="filament-params" hidden>
                     <div class="filament-slider-row">
                         <label for="filament-seed-count">Seeds</label>
@@ -1006,6 +1029,70 @@
           thresholdSlider.addEventListener('change', function () {
             pushThreshold();
             try { localStorage.setItem('chess4d-oc.heatmap.threshold', thresholdSlider.value); } catch (_) {}
+          });
+        }
+
+        // M11.3.2 — 4D clipping sphere mode dropdown + radius slider.
+        var clipModeSel = document.getElementById('heatmap-clip-mode');
+        var clipRadSlider = document.getElementById('heatmap-clip-radius');
+        var clipRadDisplay = document.getElementById('heatmap-clip-radius-display');
+        var clipRadRow = document.getElementById('heatmap-clip-row');
+        function pushClip() {
+          if (!window.SpectralHeatmap) return;
+          var mode = clipModeSel ? clipModeSel.value : 'off';
+          var rad = clipRadSlider ? parseFloat(clipRadSlider.value) : 7;
+          window.SpectralHeatmap.setClipSphere(mode, rad);
+        }
+        function syncClipRow() {
+          if (!clipRadRow || !clipModeSel) return;
+          if (clipModeSel.value === 'off') clipRadRow.setAttribute('hidden', '');
+          else clipRadRow.removeAttribute('hidden');
+        }
+        // URL flag + localStorage
+        try {
+          var cParam = new URLSearchParams(location.search).get('heatmapClip');
+          if (cParam && clipModeSel && clipRadSlider) {
+            var cp = cParam.split(':');
+            if (['off','center','peak','click'].indexOf(cp[0]) >= 0) clipModeSel.value = cp[0];
+            if (Number.isFinite(parseFloat(cp[1]))) clipRadSlider.value = String(parseFloat(cp[1]));
+          } else {
+            var cStored = localStorage.getItem('chess4d-oc.heatmap.clip');
+            if (cStored && clipModeSel) {
+              var cs = cStored.split(':');
+              if (['off','center','peak','click'].indexOf(cs[0]) >= 0) clipModeSel.value = cs[0];
+              if (cs[1] && clipRadSlider && Number.isFinite(parseFloat(cs[1]))) {
+                clipRadSlider.value = String(parseFloat(cs[1]));
+              }
+            }
+          }
+        } catch (_) {}
+        if (clipRadDisplay && clipRadSlider) clipRadDisplay.textContent = parseFloat(clipRadSlider.value).toFixed(1);
+        syncClipRow();
+        pushClip();
+        if (clipModeSel) {
+          clipModeSel.addEventListener('change', function () {
+            syncClipRow();
+            pushClip();
+            try {
+              localStorage.setItem(
+                'chess4d-oc.heatmap.clip',
+                clipModeSel.value + ':' + (clipRadSlider ? clipRadSlider.value : '7')
+              );
+            } catch (_) {}
+          });
+        }
+        if (clipRadSlider) {
+          clipRadSlider.addEventListener('input', function () {
+            if (clipRadDisplay) clipRadDisplay.textContent = parseFloat(clipRadSlider.value).toFixed(1);
+          });
+          clipRadSlider.addEventListener('change', function () {
+            pushClip();
+            try {
+              localStorage.setItem(
+                'chess4d-oc.heatmap.clip',
+                (clipModeSel ? clipModeSel.value : 'off') + ':' + clipRadSlider.value
+              );
+            } catch (_) {}
           });
         }
       });
