@@ -525,7 +525,7 @@ function executeMove(x0, y0, z0, w0, x1, y1, z1, w1) {
                         // Game ended while we waited - show modal
                         checkWinCondition();
                     }
-                }, 100);
+                }, window.TIMING.WIN_CHECK_DEFER_MS); // M11.24: SSOT'd in js/constants.js
             }
         } catch (error) {
             console.error('❌ Error executing move via moveManager:', error);
@@ -2168,7 +2168,7 @@ async function selectPiece(mesh) {
                 if (typeof checkWinCondition === 'function') {
                     checkWinCondition();
                 }
-            }, 100); // Reduced delay
+            }, window.TIMING.WIN_CHECK_DEFER_MS); // M11.24: SSOT'd in js/constants.js
         }
     }
     
