@@ -217,29 +217,48 @@
   }
 
   // ---------- local-extremum detection ---------------------------------------
-  // A face-neighbor strict-greater (or strict-less) test. Boundary cells use
-  // whatever neighbors exist; stricter than M11.1 in that we require at
-  // least 4 valid neighbors (all 4 axes have at least one direction available).
+  // M11.3.7 fix: cell qualifies as a local max if NO neighbor strictly
+  // exceeds it AND at least one neighbor is strictly less than it. This
+  // handles "plateau tops" — the chess-spectral channels for symmetric
+  // positions (e.g., the initial position with mirror-symmetric A1) have
+  // many ties to neighbors; the previous strict ">" test rejected all
+  // plateau cells, leaving topology mode with zero critical points to seed
+  // from. The plateau-aware test recovers them while still rejecting flat
+  // regions (which need at least one strictly-less neighbor to qualify).
   function _localExtrema(arr, mode) {
     // mode: 'max' or 'min'
     const out = [];
-    const cmp = mode === 'max' ? (a, b) => a > b : (a, b) => a < b;
+    const isMax = mode === 'max';
     for (let x = 0; x < N; x++) {
       for (let y = 0; y < N; y++) {
         for (let z = 0; z < N; z++) {
           for (let w = 0; w < N; w++) {
             const i = _idx(x, y, z, w);
             const v = arr[i];
-            let isExt = true;
-            if (x > 0     && !cmp(v, arr[i - STRIDE_X])) isExt = false;
-            if (isExt && x < N - 1 && !cmp(v, arr[i + STRIDE_X])) isExt = false;
-            if (isExt && y > 0     && !cmp(v, arr[i - STRIDE_Y])) isExt = false;
-            if (isExt && y < N - 1 && !cmp(v, arr[i + STRIDE_Y])) isExt = false;
-            if (isExt && z > 0     && !cmp(v, arr[i - STRIDE_Z])) isExt = false;
-            if (isExt && z < N - 1 && !cmp(v, arr[i + STRIDE_Z])) isExt = false;
-            if (isExt && w > 0     && !cmp(v, arr[i - STRIDE_W])) isExt = false;
-            if (isExt && w < N - 1 && !cmp(v, arr[i + STRIDE_W])) isExt = false;
-            if (isExt) out.push(i);
+            // Disqualified if any neighbor strictly EXCEEDS v (for max)
+            // or strictly LESS THAN v (for min).
+            let dominated = false;
+            // Confirmed extremum if at least one neighbor is strictly
+            // OPPOSITE of v (otherwise it's a flat region, not a peak).
+            let hasStrictDifference = false;
+            function check(nv) {
+              if (isMax) {
+                if (nv >  v) dominated = true;
+                if (nv <  v) hasStrictDifference = true;
+              } else {
+                if (nv <  v) dominated = true;
+                if (nv >  v) hasStrictDifference = true;
+              }
+            }
+            if (x > 0)     check(arr[i - STRIDE_X]);
+            if (x < N - 1) check(arr[i + STRIDE_X]);
+            if (y > 0)     check(arr[i - STRIDE_Y]);
+            if (y < N - 1) check(arr[i + STRIDE_Y]);
+            if (z > 0)     check(arr[i - STRIDE_Z]);
+            if (z < N - 1) check(arr[i + STRIDE_Z]);
+            if (w > 0)     check(arr[i - STRIDE_W]);
+            if (w < N - 1) check(arr[i + STRIDE_W]);
+            if (!dominated && hasStrictDifference) out.push(i);
           }
         }
       }
@@ -344,11 +363,42 @@
       s.index = neg;
       result.push(s);
     }
+    // M11.3.7 fallback: if the field is so flat / symmetric that NO
+    // critical point qualified (no plateau tops, no saddles), seed from
+    // the global max + min so the user sees SOMETHING. This guarantees
+    // topology mode never silently produces an empty visualization on
+    // unusual channels.
+    if (result.length === 0) {
+      let gMaxIdx = -1, gMaxVal = -Infinity;
+      let gMinIdx = -1, gMinVal = +Infinity;
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i] > gMaxVal) { gMaxVal = arr[i]; gMaxIdx = i; }
+        if (arr[i] < gMinVal) { gMinVal = arr[i]; gMinIdx = i; }
+      }
+      function _addFallback(idx, type) {
+        if (idx < 0) return;
+        const [x, y, z, w] = _idxToXYZW(idx);
+        const H = _hessianAt(arr, x, y, z, w);
+        if (!H) return;
+        const { eigvals, eigvecs } = _eigJacobi4x4(H);
+        let neg = 0;
+        for (let k = 0; k < 4; k++) if (eigvals[k] < 0) neg++;
+        const g = _gradientAt(arr, x, y, z, w);
+        result.push({
+          idx, x, y, z, w, type,
+          gradMag: Math.hypot(g[0], g[1], g[2], g[3]),
+          eigvals, eigvecs, index: neg,
+        });
+      }
+      _addFallback(gMaxIdx, 'max');
+      if (gMinIdx !== gMaxIdx) _addFallback(gMinIdx, 'min');
+    }
     const dt = (typeof performance !== 'undefined') ? (performance.now() - t0) : 0;
     console.log(
       `[topology4d] critical points: ${result.length} ` +
-        `(maxima=${maxima.length}, minima=${minima.length}, saddles=${saddles.length}) ` +
-        `in ${dt.toFixed(2)}ms`
+        `(maxima=${maxima.length}, minima=${minima.length}, saddles=${saddles.length}` +
+        (result.length > maxima.length + minima.length + saddles.length ? `, +${result.length - maxima.length - minima.length - saddles.length} fallback` : '') +
+        `) in ${dt.toFixed(2)}ms`
     );
     return result;
   }

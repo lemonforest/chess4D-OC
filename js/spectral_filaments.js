@@ -76,15 +76,21 @@
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
     geom.setAttribute('color',    new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
     geom.setDrawRange(0, 0);
+    // M11.3.7 visibility tweaks: opacity 1.0 + depthTest=false so lines
+    // always render on top of the volumetric cloud (otherwise the cloud's
+    // 4096 translucent boxes dominate the alpha blend and the lines blend
+    // visually into the cloud's color rather than reading as separate
+    // filaments).
     const mat = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: 1.0,
       depthWrite: false,
+      depthTest: false,
     });
     lineMesh = new THREE.LineSegments(geom, mat);
     lineMesh.frustumCulled = false;
-    lineMesh.renderOrder = 3; // after the heat-map cloud
+    lineMesh.renderOrder = 5; // after cloud (2), tint (1), iso (TBD)
     lineMesh.visible = false;
     _scene.add(lineMesh);
     return lineMesh;
