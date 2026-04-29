@@ -910,6 +910,9 @@ function setupNavigationControls() {
    ============================================ */
 
 function initializeGame() {
+    // M11.7: expose selectPiece + currentGameMode so Bot.js can auto-
+    // select moved pieces in bot games. Idempotent — safe to call early.
+    _exposeBotHooks();
     updateLoadingText('Loading chess piece models...');
     
     // Load 3D models (.obj files)
@@ -2019,6 +2022,15 @@ function filterIllegalMoves(gameBoard, x0, y0, z0, w0, possibleMoves, team) {
 }
 
 
+// M11.7: expose selectPiece + currentGameMode on window so Bot.js can
+// auto-select the moved piece in bot games (gives the spectral overlay
+// a continuous trigger even when no human is clicking).
+function _exposeBotHooks() {
+    if (typeof window === 'undefined') return;
+    window.selectPiece = selectPiece;
+    window.currentGameMode = currentGameMode;
+}
+
 function selectPiece(mesh) {
     if (!mesh || !gameBoard) return;
     
@@ -2282,9 +2294,12 @@ function setGameMode(mode) {
     
     // Stop any running bot interval
     stopBotMoveInterval();
-    
+
     // Update current mode
     currentGameMode = mode;
+    // M11.7: keep the window-exposed copy in sync so Bot.js sees the
+    // current mode when auto-selecting the moved piece.
+    if (typeof window !== 'undefined') window.currentGameMode = mode;
     
     // Update button states
     document.querySelectorAll('.mode-btn').forEach(btn => {
