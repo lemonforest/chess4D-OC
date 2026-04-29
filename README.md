@@ -53,7 +53,8 @@ The fork exposes runtime flags via URL query parameters. Defaults are chosen so 
 | `?legalityEngine=` | `js`, `shadow`, `py` | `js` | Whose legality oracle drives gameplay. `js` keeps the JS chain authoritative; `shadow` runs the Python oracle in parallel and logs JS-vs-Python diffs to console; `py` is reserved for a future async cutover. |
 | `?legalityOps=` | `spatial`, `phase` | `spatial` | When the worker computes legal moves, choose the chess-spectral backend. Both produce the same result; differs in geometric (spatial) vs Fourier-domain (phase) implementation. Falls back to spatial if the phase module isn't importable. |
 | `?debug=1` | (presence) | off | Shows a fixed-position engine-status overlay in the bottom-left (chess-spectral / chess4d versions, MODULUS_4D, initial-position piece count). |
-| `?bot=` | `smart` | off | Switches the bot from the v0 single-ply heuristic to iterative-deepening alpha-beta with a transposition table and MVV-LVA move ordering (M13.1). Default depth 3 with a 4-second time budget per move. Future M13.2 will replace the material+mobility eval with chess-spectral channel-energy weighted sum. |
+| `?bot=` | `smart` | off | Legacy flag: shorthand for `?botWhite=smart&botBlack=smart`. Kept for backward compatibility. |
+| `?botWhite=`, `?botBlack=` | `v0`, `smart`, `random`, `aggressive`, `defensive`, `center` | `v0` | M13.2: pick a different decision matrix per side for A/B testing. `v0` is the original single-ply heuristic + 30%-randomized top moves; `smart` is iterative-deepening alpha-beta + transposition table; `random` is the uniform-random control; `aggressive`/`defensive`/`center` are weighted single-ply variants emphasizing capture/safety/center-control respectively. |
 
 **Spectral visualization layers (M10 → M11.3.x):**
 

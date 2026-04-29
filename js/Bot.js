@@ -337,12 +337,14 @@ const Bot = {
             return Promise.resolve(false);
         }
         
-        // M13.1: when smart mode is on, use the iterative-deepening alpha-
-        // beta search instead of the v0 single-ply heuristic. Otherwise
-        // keep the original behavior — backward-compatible default.
-        const move = Bot.smartMode
-            ? Bot.getBestMoveSmart(gameBoard, team)
-            : Bot.getBestMove(gameBoard, team);
+        // M13.2: dispatch through the strategy registry. Each team has its
+        // own active strategy (default 'v0' both sides; URL flags or UI
+        // dropdowns can pick different strategies per team for A/B testing).
+        const stratName = Bot.getActiveStrategyName(team);
+        const strategy = Bot.strategies[stratName];
+        const move = strategy
+            ? strategy.getBestMove(gameBoard, team)
+            : Bot.getBestMove(gameBoard, team); // fallback if registry is missing
         
         if (!move) {
             console.warn(`Bot: No legal moves found for team ${team} - may be checkmate/stalemate`);
@@ -683,16 +685,172 @@ const Bot = {
     },
 };
 
-// M13.1 — URL flag opt-in. ?bot=smart enables iterative-deepening alpha-beta.
-// Fully backward compatible — default behavior is unchanged (single-ply
-// heuristic + top-30% randomization). Once shipped + tested, M13.2 can
-// replace the eval function with chess-spectral channel-energy weights.
-try {
-    if (typeof window !== 'undefined') {
-        const flag = new URLSearchParams(location.search).get('bot');
-        if (flag === 'smart') {
-            Bot.smartMode = true;
-            console.log('[m13.1/bot] smart mode enabled (?bot=smart)');
+// ────────────────────────────────────────────────────────────────────────
+// M13.2 — STRATEGY REGISTRY
+//
+// User said: 'our bots could use different decision matrices too maybe?
+// at least for some testing. experiment on everything!' Done. The Bot
+// is now a registry of named strategies; the active strategy per side
+// is selectable via URL flags ?botWhite=NAME and ?botBlack=NAME, or via
+// the dropdowns in the Bot Strategy card.
+//
+// All strategies share the legality-check + visual-feedback infrastructure
+// in Bot.makeMove / Bot.executeMoveImmediate; they only differ in
+// HOW they pick the move from the legal-move set.
+//
+// Available strategies (extensible — add more by registering on Bot.strategies):
+//   - 'v0'         : the original single-ply heuristic + top-30% randomization
+//   - 'smart'      : iterative-deepening alpha-beta + transposition table (M13.1)
+//   - 'random'     : uniform random over legal moves (control / baseline)
+//   - 'aggressive' : capture value × 5 — chases material, ignores safety
+//   - 'defensive'  : penalty for under-attack destinations × 5 — avoids danger
+//   - 'center'     : center bonus × 5 — fights for the lattice center
+//
+// Future M13.3 will add 'spectral-eval' once the async chess-spectral
+// channel-energy weighted-sum eval is wired up.
+// ────────────────────────────────────────────────────────────────────────
+
+Bot._randomLegalMove = function (gameBoard, team) {
+    const moves = Bot.generateOrderedMoves(gameBoard, team);
+    if (!moves.length) return null;
+    return moves[Math.floor(Math.random() * moves.length)];
+};
+
+Bot._weightedHeuristicMove = function (gameBoard, team, weights) {
+    // Generic single-ply heuristic with adjustable weights. weights = { capture, safety, center }.
+    // Keeps the same evaluateMove structure but lets each strategy emphasize
+    // a different facet. Re-uses the existing capture/safety/center helpers.
+    if (!gameBoard || !gameBoard.pieces) return null;
+    const isInCheck = gameBoard.inCheck && gameBoard.inCheck(team);
+    const escapeMoves = [];
+    const allMoves = [];
+    const v = Bot._PIECE_VALUES;
+    const n = gameBoard.n;
+    for (let x = 0; x < n; x++) {
+        for (let y = 0; y < n; y++) {
+            for (let z = 0; z < n; z++) {
+                for (let w = 0; w < n; w++) {
+                    const piece = gameBoard.pieces[x][y][z][w];
+                    if (!piece || !piece.type || piece.team !== team) continue;
+                    let candidates;
+                    try { candidates = piece.getPossibleMoves(gameBoard.pieces, x, y, z, w); }
+                    catch (_) { continue; }
+                    if (!candidates || !candidates.length) continue;
+                    for (const m of candidates) {
+                        if (isInCheck) {
+                            if (!Bot.moveGetsOutOfCheck(gameBoard, x, y, z, w, m.x, m.y, m.z, m.w, team)) continue;
+                            escapeMoves.push({
+                                x0: x, y0: y, z0: z, w0: w,
+                                x1: m.x, y1: m.y, z1: m.z, w1: m.w,
+                                score: 10000,
+                            });
+                            continue;
+                        }
+                        let s = 0;
+                        const target = gameBoard.pieces[m.x][m.y][m.z][m.w];
+                        if (target && target.type && target.team !== team) {
+                            s += weights.capture * (v[target.type] || 10);
+                        }
+                        // Cheap safety probe: simulate the move briefly.
+                        const tempPiece = gameBoard.pieces[m.x][m.y][m.z][m.w];
+                        gameBoard.pieces[m.x][m.y][m.z][m.w] = gameBoard.pieces[x][y][z][w];
+                        gameBoard.pieces[x][y][z][w] = Bot.createEmptyPiece();
+                        const underAttack = Bot.isPositionUnderAttack(gameBoard, m.x, m.y, m.z, m.w, team);
+                        gameBoard.pieces[x][y][z][w] = gameBoard.pieces[m.x][m.y][m.z][m.w];
+                        gameBoard.pieces[m.x][m.y][m.z][m.w] = tempPiece;
+                        if (underAttack) {
+                            const sourceVal = v[piece.type] || 10;
+                            s -= weights.safety * sourceVal;
+                        } else {
+                            s += weights.safety * 1;
+                        }
+                        s += weights.center * Bot.getCenterBonus(m.x, m.y, m.z, m.w);
+                        allMoves.push({
+                            x0: x, y0: y, z0: z, w0: w,
+                            x1: m.x, y1: m.y, z1: m.z, w1: m.w,
+                            score: s,
+                        });
+                    }
+                }
+            }
         }
     }
-} catch (_) { /* not in a browser; leave smartMode = false */ }
+    const pool = isInCheck ? escapeMoves : allMoves;
+    if (!pool.length) return null;
+    pool.sort((a, b) => b.score - a.score);
+    // Pick from top 30% to keep games varied even with extreme weights.
+    const topN = Math.max(1, Math.floor(pool.length * 0.3));
+    return pool[Math.floor(Math.random() * topN)];
+};
+
+Bot.strategies = {
+    v0: {
+        label: 'Handcrafted heuristic (v0)',
+        getBestMove: function (gb, team) { return Bot.getBestMove(gb, team); },
+    },
+    smart: {
+        label: 'Alpha-beta + TT (depth 3)',
+        getBestMove: function (gb, team) { return Bot.getBestMoveSmart(gb, team); },
+    },
+    random: {
+        label: 'Random legal move (control)',
+        getBestMove: function (gb, team) { return Bot._randomLegalMove(gb, team); },
+    },
+    aggressive: {
+        label: 'Aggressive (5× capture weight)',
+        getBestMove: function (gb, team) {
+            return Bot._weightedHeuristicMove(gb, team, { capture: 5, safety: 1, center: 1 });
+        },
+    },
+    defensive: {
+        label: 'Defensive (5× safety weight)',
+        getBestMove: function (gb, team) {
+            return Bot._weightedHeuristicMove(gb, team, { capture: 1, safety: 5, center: 1 });
+        },
+    },
+    center: {
+        label: 'Center-control (5× center weight)',
+        getBestMove: function (gb, team) {
+            return Bot._weightedHeuristicMove(gb, team, { capture: 1, safety: 1, center: 5 });
+        },
+    },
+};
+
+// Per-side active strategy. Default both to v0 (existing behavior).
+// URL flags: ?botWhite=smart&botBlack=defensive (e.g.) override the default
+// at page load. UI dropdowns can flip these mid-game.
+Bot.activeStrategy = { 0: 'v0', 1: 'v0' }; // 0=white, 1=black
+
+Bot.setStrategy = function (team, name) {
+    if (!Bot.strategies[name]) {
+        console.warn('[m13.2/bot] unknown strategy:', name, '— available:', Object.keys(Bot.strategies));
+        return;
+    }
+    Bot.activeStrategy[team] = name;
+    console.log('[m13.2/bot] team ' + team + ' (' + (team === 0 ? 'white' : 'black') + ') → ' + name);
+};
+
+Bot.getActiveStrategyName = function (team) {
+    return Bot.activeStrategy[team] || 'v0';
+};
+
+// M13.1 + M13.2 boot-time URL-flag handling.
+//   ?bot=smart            → backward-compatibility: enables smart for BOTH sides
+//   ?botWhite=NAME        → set white's strategy
+//   ?botBlack=NAME        → set black's strategy
+try {
+    if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(location.search);
+        const legacy = params.get('bot');
+        if (legacy === 'smart') {
+            Bot.smartMode = true;
+            // M13.2: also write into the per-team registry for symmetry.
+            Bot.activeStrategy = { 0: 'smart', 1: 'smart' };
+            console.log('[m13.1/bot] smart mode enabled (?bot=smart, both sides)');
+        }
+        const botWhite = params.get('botWhite');
+        const botBlack = params.get('botBlack');
+        if (botWhite) Bot.setStrategy(0, botWhite);
+        if (botBlack) Bot.setStrategy(1, botBlack);
+    }
+} catch (_) { /* not in a browser; leave defaults */ }
