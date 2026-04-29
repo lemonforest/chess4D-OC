@@ -14,7 +14,7 @@ The user said: *"we'll need to see what we opened up api wise and what we find w
 
 ---
 
-## Currently exposed (17 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26)
+## Currently exposed (19 methods: 13 pre-1.5 + 2 from M11.25 + 2 from M11.26 + 2 from M11.27)
 
 All methods return `Promise`s. The bridge serializes mutations through `applyChain` so move-applying methods don't race.
 
@@ -37,10 +37,12 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getEncoderShape()` *(M11.25)* | — | `{ ok, totalDim, channels: [{name,offset,dim}] }` | (overlay modules — wire-up pending) | 45,056-dim, 11 channels of 4096 each |
 | `hasLegalMoves(team)` *(M11.26)* | `0\|1` | `{ ok, hasMoves: boolean }` | (M11.26.1 cutover pending) | King-first scan in Python; drop-in for `gameBoard.hasLegalMoves` |
 | `getFen4State()` *(M11.26)* | — | `{ ok, fen4 }` | (M11.6 export refactor pending) | Best-effort v1 serializer; probes upstream + hand-rolled fallback |
+| `getQmState(opts?)` *(M11.27)* | `{ sideToMove?: bool }` | `{ ok, psi: Float32Array(90112), basisDim: 45056, normSq }` | (M14.x viz pending) | ψ as real+imag interleaved Float32; `psi[2k]=Re`, `psi[2k+1]=Im` |
+| `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | (M14.1 viz pending) | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
-`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`.
+`js/spectral_worker.js` `handlers` object: `init`, `getStatus`, `getConstants`, `getInitialPositionInfo`, `applyMove`, `undo`, `resetToInitial`, `legalMoves`, `setLegalityOps`, `previewEncoding`, `getBoardEncoding`, `listInitialPieces`, `legalMovesAtInitial`, `getVersion`, `getEncoderShape`, `hasLegalMoves`, `getFen4State`, `getQmState`, `getQmDensity`.
 
 ---
 
@@ -84,8 +86,8 @@ Tied to the design in `docs/qm_4d_design.md`. Lights up the M14.x visualization 
 
 | Proposed method | Upstream symbol | Wire-up milestone | Notes |
 |---|---|---|---|
-| `getQmState()` | `qm_4d_bridge.get_qm_state` | M11.27 | Returns `psi` as Float32 length 90112 (real+imag interleaved); `basisDim=45056`; `normSq` |
-| `getQmDensity(pieceId?)` | `qm_4d_bridge.get_qm_density` | M11.27 | Returns `density: Float32Array(4096)` summing `\|ψ\|²` over channels |
+| `getQmState()` | `qm_4d_bridge.get_qm_state` | **Wired in M11.27** ✅ | Returns `psi` as Float32 length 90112 (real+imag interleaved); `basisDim=45056`; `normSq` |
+| `getQmDensity(pieceId?)` | `qm_4d_bridge.get_qm_density` | **Wired in M11.27** ✅ | Returns `density: Float32Array(4096)` summing `\|ψ\|²` over channels |
 | `applyMoveQm(origin, dest)` | `qm_4d_bridge.apply_move_qm` / `apply_move_qm_full` | M11.28 | `_full` variant returns assembled ψ_post; both available |
 | `measureAt(coords, observable?)` | `qm_4d_bridge.measure_at` | M11.28 | Born-rule projective measurement |
 | `getDensityMatrixOf(pieceId)` | `qm_4d_bridge.get_density_matrix_of` | M11.28 | For entanglement viz |
