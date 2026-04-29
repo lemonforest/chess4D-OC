@@ -452,6 +452,15 @@ const Bot = {
                 move.x0, move.y0, move.z0, move.w0,
                 move.x1, move.y1, move.z1, move.w1
             );
+            // M11.20: refresh piece-count statistics. moveManager.move
+            // mutates gameBoard.pieces (capture removes the target piece)
+            // but doesn't itself fire the UI count update. Human-move
+            // paths already call updatePieceCounts; the bot path didn't,
+            // so bot games left the white-count/black-count stats stuck
+            // at the initial 448/448 even after captures. Patched here.
+            if (typeof window !== 'undefined' && typeof window.updatePieceCounts === 'function') {
+                window.updatePieceCounts();
+            }
             // M11.7: auto-select the bot's moved piece so the spectral
             // overlay continues to show during bot-vs-bot (and vs-bot)
             // games. Without this, the cloud + tint + filaments still

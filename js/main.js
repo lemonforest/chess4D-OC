@@ -2036,10 +2036,14 @@ function filterIllegalMoves(gameBoard, x0, y0, z0, w0, possibleMoves, team) {
 // M11.7: expose selectPiece + currentGameMode on window so Bot.js can
 // auto-select the moved piece in bot games (gives the spectral overlay
 // a continuous trigger even when no human is clicking).
+// M11.20: also expose updatePieceCounts so bot moves refresh the
+// statistics card (white-count / black-count) — previously only
+// human-move paths called this, leaving bot-game stats stuck at 448.
 function _exposeBotHooks() {
     if (typeof window === 'undefined') return;
     window.selectPiece = selectPiece;
     window.currentGameMode = currentGameMode;
+    window.updatePieceCounts = updatePieceCounts;
 }
 
 // M4b.1: bridge-first legality lookup for the user-click overlay path.
