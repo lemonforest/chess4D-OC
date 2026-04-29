@@ -775,35 +775,100 @@ BoardGraphics.prototype = {
 	},
 	
 	boardCoordinates: function(x, y, z, w){
-        
-        // Get world coordinates from board coordinates
-        // NOTE: Returns position in world space (relative to piecesContainer since pieces are added there)
-        
+        // Get world coordinates from board coordinates.
+        // NOTE: Returns position in world space (relative to piecesContainer since pieces are added there).
+        // M11: when this.layoutMode === 'arc', the W axis wraps around the
+        // camera on a circular equator-arc instead of stretching linearly
+        // along world Z. Useful for VR-friendly "all 8 columns visible
+        // around me" layouts. Linear is the default; opt in via ?layout=arc.
+        if (this.layoutMode === 'arc') {
+            return this._arcBoardCoordinates(x, y, z, w);
+        }
         const zero = new THREE.Vector3((0.5 * this.squareSize) - (0.5 * this.squareSize * this.n), 0, (0.5 * this.squareSize * this.n) - (0.5 * this.squareSize))
-        
         const xShift = x * this.squareSize
         const yShift = y * this.verticalIncrement + this.EPSILON
         const zShift = -(z * this.squareSize + w * this.horizontalIncrement)
         const translation = new THREE.Vector3(xShift, yShift, zShift)
-        
         // Don't add container positions since pieces/boards are in separate containers at same origin
         return zero.add(translation)
-        
+    },
+
+    // M11: arc-layout coordinate map. Each w-column sits on a horizontal
+    // arc of radius `arcRadius` around world origin, rotated by an angle
+    // proportional to w. The cell's position within its (z,w) board is
+    // also rotated by that angle so the in-board axes align with the arc
+    // tangent. Vertical (y) layering is unchanged from linear mode.
+    _arcBoardCoordinates: function(x, y, z, w) {
+        const angleStep = this.arcSpan / Math.max(1, this.n - 1);
+        const arcAngle = (w - (this.n - 1) / 2) * angleStep;
+        const cosA = Math.cos(arcAngle);
+        const sinA = Math.sin(arcAngle);
+        // Center of the (z,w) board on the arc — the "z" component is
+        // built into the arc-tangent direction, and the radial direction
+        // is the arc radius. Within a w-column, increasing z moves the
+        // board further from the arc center along its tangent.
+        const boardCenterX = this.arcRadius * sinA;
+        const boardCenterZ = -this.arcRadius * cosA;
+        // In-board cell offset: x along the board's local X axis,
+        // z along the board's local Z axis. Both rotate with the arc
+        // angle so the board's grid follows the arc tangent.
+        const localX = (x - (this.n - 1) / 2) * this.squareSize;
+        const localZ = (z - (this.n - 1) / 2) * this.squareSize;
+        // Rotation by arcAngle around Y: (X, Z) -> (X cos + Z sin, -X sin + Z cos)
+        const worldX = boardCenterX + (localX * cosA + localZ * sinA);
+        const worldZ = boardCenterZ + (-localX * sinA + localZ * cosA);
+        const yShift = y * this.verticalIncrement + this.EPSILON;
+        return new THREE.Vector3(worldX, yShift, worldZ);
     },
 	
 	worldCoordinates: function(pos){
-        
-        // Get board coordinates from world coordinates
+        // Get board coordinates from world coordinates.
+        // M11: arc mode inverts the arc transform to recover lattice coords.
+        if (this.layoutMode === 'arc') {
+            return this._arcWorldCoordinates(pos);
+        }
         const zero = new THREE.Vector3((0.5 * this.squareSize) - (0.5 * this.squareSize * this.n), 0, (0.5 * this.squareSize * this.n) - (0.5 * this.squareSize))
         pos = pos.clone().sub(zero)  // Don't subtract container position
-        
         let x = Math.floor(pos.x / this.squareSize)
         let y = Math.floor(pos.y / this.verticalIncrement)
         let numGaps = Math.floor(-pos.z / this.horizontalIncrement)
         let z = Math.floor((-pos.z - (numGaps * this.horizontalIncrement)) / this.squareSize)
         let w = numGaps
-        
         return new THREE.Vector4(x, y, z, w)
+    },
+
+    // M11: inverse of _arcBoardCoordinates. Given a world-space (X, Y, Z),
+    // identify (a) which w-column the point is closest to via its arc
+    // angle around world origin, then (b) the local (lattice x, lattice z)
+    // within that column by undoing the rotation.
+    _arcWorldCoordinates: function(pos) {
+        const angleStep = this.arcSpan / Math.max(1, this.n - 1);
+        // Arc angle from -Z axis; sin = X/R, cos = -Z/R, so arcAngle = atan2(X, -Z).
+        const arcAngle = Math.atan2(pos.x, -pos.z);
+        const wRaw = (arcAngle / angleStep) + (this.n - 1) / 2;
+        const w = Math.max(0, Math.min(this.n - 1, Math.round(wRaw)));
+        // Recompute the snapped arcAngle for this w so the local-frame
+        // inverse rotation uses the BOARD's angle, not the click's exact angle.
+        const snappedAngle = (w - (this.n - 1) / 2) * angleStep;
+        const cosA = Math.cos(snappedAngle);
+        const sinA = Math.sin(snappedAngle);
+        const cx = this.arcRadius * sinA;
+        const cz = -this.arcRadius * cosA;
+        // Subtract the board center, then rotate by -snappedAngle around Y.
+        // Forward was: world = center + (localX*cosA + localZ*sinA, ., -localX*sinA + localZ*cosA)
+        // Inverse: localX = (X - cx)*cosA - (Z - cz)*sinA;
+        //          localZ = (X - cx)*sinA + (Z - cz)*cosA
+        const dX = pos.x - cx;
+        const dZ = pos.z - cz;
+        const localX = dX * cosA - dZ * sinA;
+        const localZ = dX * sinA + dZ * cosA;
+        const x = Math.max(0, Math.min(this.n - 1,
+            Math.round(localX / this.squareSize + (this.n - 1) / 2)));
+        const z = Math.max(0, Math.min(this.n - 1,
+            Math.round(localZ / this.squareSize + (this.n - 1) / 2)));
+        const y = Math.max(0, Math.min(this.n - 1,
+            Math.floor(pos.y / this.verticalIncrement)));
+        return new THREE.Vector4(x, y, z, w);
     },
 	
     showPossibleMoves: function(locations, piece, materialScheme={}, canRayCast=false){
@@ -1100,6 +1165,20 @@ function BoardGraphics(gameBoard) {
     this.globalHeight = this.verticalIncrement * this.n
 	this.boardHeight = 5;
     this.EPSILON = 1  // Small offset to place pieces just above board surface
+
+    // M11: layout mode — 'linear' (default) stacks W columns along world Z;
+    // 'arc' wraps the W columns around an equator-arc on a horizontal
+    // sphere of radius `arcRadius`, so the user can rotate their head
+    // through them rather than walk down a long line. Opt in via
+    // ?layout=arc URL flag. arcSpan = 2π/3 (120°) chosen so 8 boards
+    // span a comfortable head-turn arc without curling back behind.
+    this.layoutMode = 'linear';
+    this.arcRadius = this.horizontalIncrement * 2.5;  // ~1200 world units
+    this.arcSpan = (Math.PI * 2) / 3;
+    try {
+        const flag = new URLSearchParams(location.search).get('layout');
+        if (flag === 'arc') this.layoutMode = 'arc';
+    } catch (_) { /* node test env without window — leave default */ }
 	
 	this.mesh = new THREE.Object3D();
 	this.boardContainer = new THREE.Object3D();
@@ -1128,11 +1207,31 @@ function BoardGraphics(gameBoard) {
 		this.boardRefs = [];
 	}
 	
+	// M11: precompute arc-mode trig if layoutMode === 'arc' so each
+	// board picks its position+rotation from the same parameters as
+	// boardCoordinates() — keeps cell rendering and overlay positioning
+	// in sync. Note: each (w, i=z) pair gives one board in chess4D's
+	// 64-board layout, where i indexes the vertical Y stack and w the
+	// 4D direction. In arc mode, w determines the angle around the arc.
+	const arcAngleStep = this.arcSpan / Math.max(1, this.n - 1);
 	for (let w = 0; w < this.n; w++){
 		for(let i = 0; i < this.n; i++){
 			let checker = BoardGraphics.checkerboard3d(this.n, this.n * this.squareSize, z=i, w, opacity=0.8, this.boardHeight) // Construct 2D checkerboard planes
-			checker.position.set(0, bottom + i*this.verticalIncrement, left - w*this.horizontalIncrement)
-			rotateObject(checker, -90, 0, 0)
+			if (this.layoutMode === 'arc') {
+				const arcAngle = (w - (this.n - 1) / 2) * arcAngleStep;
+				const cx = this.arcRadius * Math.sin(arcAngle);
+				const cz = -this.arcRadius * Math.cos(arcAngle);
+				checker.position.set(cx, bottom + i * this.verticalIncrement, cz);
+				// Two rotations apply: -90° around X to lay the board flat
+				// (existing behavior), plus +arcAngle around Y so the board's
+				// in-plane axes align with the arc tangent. Three.js applies
+				// rotations in XYZ order, so set the rotation directly.
+				rotateObject(checker, -90, 0, 0);
+				checker.rotation.y = arcAngle;
+			} else {
+				checker.position.set(0, bottom + i*this.verticalIncrement, left - w*this.horizontalIncrement)
+				rotateObject(checker, -90, 0, 0)
+			}
 			this.boardContainer.add(checker)
 			this.boardRefs.push(checker); // Store for potential culling optimizations
 			
