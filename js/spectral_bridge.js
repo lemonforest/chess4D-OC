@@ -25,6 +25,16 @@
   const renderFlag = new URLSearchParams(location.search).get('renderer');
   window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
 
+  // M7e feature flag: ?gpu= picks the renderer backend.
+  //   webgl  — Three.js WebGLRenderer (default; broadly compatible)
+  //   webgpu — Three.js WebGPURenderer (r184 GA; falls back to webgl
+  //            automatically if navigator.gpu is missing or init() fails)
+  // BatchedMesh on WebGPU is currently slower than WebGL on Android per
+  // mrdoob/three.js#29580 — keep webgl as the default until benchmarks
+  // say otherwise.
+  const gpuFlag = new URLSearchParams(location.search).get('gpu');
+  window.__GPU__ = (gpuFlag === 'webgpu') ? 'webgpu' : 'webgl';
+
   const worker = new Worker('js/spectral_worker.js');
   const pending = new Map();
   let nextId = 1;

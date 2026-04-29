@@ -232,7 +232,7 @@ if (typeof window !== 'undefined') {
    INITIALIZATION
    ============================================ */
 
-function init() {
+async function init() {
     console.log('🎮 Initializing 4D Chess...');
     
     // Setup global callbacks for GameBoard (so it can call deselectPiece after animation)
@@ -268,9 +268,10 @@ function init() {
     canvas = document.getElementById('game-canvas');
     loadingScreen = document.getElementById('loading-screen');
     
-    // Setup Three.js
-    setupThreeJS();
-    
+    // Setup Three.js — async because the M7e WebGPURenderer path is
+    // async-init. The WebGL fast path resolves on the same microtask.
+    await setupThreeJS();
+
     // Setup UI event listeners
     setupUIEvents();
     
@@ -583,28 +584,60 @@ function updatePieceCounts() {
    THREE.JS SETUP
    ============================================ */
 
-function setupThreeJS() {
+async function setupThreeJS() {
     // Create scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0e27); // Dark blue background
     // PERFORMANCE: Slightly reduce fog distance (minimal visual impact, better culling)
     scene.fog = new THREE.Fog(0x0a0e27, 800, 2500); // Reduced from 1000-3000 to 800-2500
-    
+
     // Create camera
     const aspect = window.innerWidth / window.innerHeight;
     // PERFORMANCE: Slightly reduce FOV and far plane (minimal visual impact)
     camera = new THREE.PerspectiveCamera(58, aspect, 1, 4000); // FOV: 60→58, far: 10000→4000
-    
+
     // Initial camera position (will be adjusted after board is created)
     camera.position.set(0, 1500, 0);
-    
-    // Create renderer
-    renderer = new THREE.WebGLRenderer({
-        canvas: canvas,
-        antialias: false, // Disable antialiasing for better performance
-        alpha: false,
-        powerPreference: "high-performance" // Prefer performance over quality
-    });
+
+    // M7e: pick renderer backend per the ?gpu= URL flag.
+    // WebGPU is opt-in. We try WebGPURenderer when (a) the flag is set,
+    // (b) the browser exposes navigator.gpu, and (c) renderer.init() resolves.
+    // Any failure falls back transparently to WebGLRenderer.
+    const wantWebGPU =
+        typeof window !== 'undefined' &&
+        window.__GPU__ === 'webgpu' &&
+        typeof navigator !== 'undefined' &&
+        navigator.gpu &&
+        typeof THREE.WebGPURenderer === 'function';
+
+    let chosenBackend = 'webgl';
+    if (wantWebGPU) {
+        try {
+            renderer = new THREE.WebGPURenderer({
+                canvas: canvas,
+                antialias: false,
+                alpha: false,
+                powerPreference: 'high-performance',
+            });
+            // WebGPURenderer is async-init in r184.
+            await renderer.init();
+            chosenBackend = 'webgpu';
+            console.log('[m7e] Renderer: WebGPU (Three.js r' + THREE.REVISION + ')');
+        } catch (err) {
+            console.warn('[m7e] WebGPU init failed, falling back to WebGL:', err);
+            renderer = null;
+        }
+    }
+    if (!renderer) {
+        renderer = new THREE.WebGLRenderer({
+            canvas: canvas,
+            antialias: false,
+            alpha: false,
+            powerPreference: 'high-performance',
+        });
+        console.log('[m7e] Renderer: WebGL (Three.js r' + THREE.REVISION + ')');
+    }
+    if (typeof window !== 'undefined') window.__GPU_ACTUAL__ = chosenBackend;
     renderer.setSize(window.innerWidth - 560, window.innerHeight - 60); // Minus panels width
     // PERFORMANCE: Cap pixel ratio at 1.5 for better performance while maintaining quality
     // (1.5 is a good balance - looks great but much faster than 2.0 or 3.0)
