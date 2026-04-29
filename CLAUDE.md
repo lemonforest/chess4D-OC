@@ -78,6 +78,17 @@ python -m http.server 8000
 
 **Do not** open `index.html` via `file://` — Pyodide's micropip can't fetch from PyPI under a `file://` origin (CORS).
 
+### Sync vs async legality paths after M4b.1 (2026-04-29)
+
+The user-click overlay path (``selectPiece`` in ``js/main.js``) is now **async** and routes legality through ``SpectralBridge.legalMoves`` (chess-spectral / Pyodide) when the bridge is ready, falling back to JS ``Piece.getPossibleMoves`` + ``filterIllegalMoves`` otherwise. See the ``_legalMovesFor`` helper for the dispatch.
+
+**Other paths still sync** for the moment:
+- Move-execution validation in ``js/main.js`` (around line 409 — performs final isValidMove check before `applyMove`). The ``?legalityEngine=shadow|py`` flag already cross-checks against the bridge in parallel.
+- ``GameBoard.hasLegalMoves`` (used for checkmate / stalemate detection). Iterates pieces synchronously.
+- ``Bot.js`` strategies — bot search uses sync ``Piece.getPossibleMoves`` until chess-spectral 1.6 engine ships and Bot.js becomes a thin wrapper around ``bridge.getBestMove``. See ``docs/bridge_api.md``.
+
+**Don't delete ``js/pieces/*.js``** until chess-spectral 1.6 engine module ships. The Piece classes are still load-bearing for the Bot and the JS-fallback path inside ``_legalMovesFor``.
+
 ### Known non-issues (don't waste a PR on these)
 
 - **"The boards are off-center / clipped at the edge of the canvas."**
