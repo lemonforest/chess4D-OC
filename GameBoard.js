@@ -102,6 +102,8 @@ GameBoard.prototype = {
 						// (No-ops when overlays are disabled.)
 						if (window.SpectralHeatmap) window.SpectralHeatmap.refresh();
 						if (window.SpectralFilaments) window.SpectralFilaments.refresh();
+						// M11.3.6: tinted board cells overlay
+						if (window.SpectralBoardTint) window.SpectralBoardTint.refresh();
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);

@@ -1008,6 +1008,13 @@ function initializeGame() {
                         try { window.SpectralFilaments.init(scene, gameBoard); }
                         catch (err) { console.warn('[m10/filaments] init error:', err); }
                     }
+                    // M11.3.6 — board-tint overlay (alternative to "hide
+                    // chess boards"). Same lifecycle as the cloud + filaments;
+                    // enabled by checkbox or ?boardTint=1.
+                    if (typeof window !== 'undefined' && window.SpectralBoardTint) {
+                        try { window.SpectralBoardTint.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m11.3.6/tint] init error:', err); }
+                    }
                     
                     setTimeout(() => {
                         updateLoadingText('Ready!');
