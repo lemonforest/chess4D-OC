@@ -432,6 +432,62 @@ body {
     box-shadow: 0 4px 15px rgba(255, 51, 102, 0.3);
 }
 
+/* Collapsible group + toggle (M10.2 UX). Default-collapsed; user can
+   expand to reveal pan / zoom / rotate. Freeze stays visible always. */
+.nav-collapsible {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+    overflow: hidden;
+    transition: max-height 220ms ease, opacity 200ms ease, margin 200ms ease;
+    max-height: 1200px; /* tall enough to never clip when expanded */
+    opacity: 1;
+}
+.nav-collapsible--collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
+/* Collapse toggle button. Sits at the bottom of nav-controls-overlay,
+   well away from the Freeze button at the top, so a misclick can't
+   land on Freeze. Small visual footprint when controls are collapsed. */
+.nav-btn-collapse {
+    background: rgba(20, 25, 51, 0.8);
+    border: 1px solid var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 160ms, color 160ms, border-color 160ms;
+    /* Extra top margin (vs the gap from container) so the button sits
+       distinctly below the rotate group when expanded. */
+    margin-top: 4px;
+}
+.nav-btn-collapse:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+.nav-btn-collapse:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+.nav-btn-collapse .nav-collapse-icon {
+    display: inline-block;
+    transition: transform 200ms ease;
+}
+.nav-btn-collapse[aria-expanded="false"] .nav-collapse-icon {
+    transform: rotate(-90deg);
+}
+
 .nav-btn-freeze.frozen:hover {
     background: linear-gradient(135deg, #ff3366, var(--accent-danger));
     box-shadow: 0 6px 20px rgba(255, 51, 102, 0.5);
@@ -1828,4 +1884,93 @@ body {
     cursor: pointer;
     font-size: 13px;
     color: var(--text-secondary);
+}
+
+/* M10.2 — filament parameter sliders. Hidden until filaments are enabled. */
+.spectral-filament-params {
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+}
+.filament-slider-row {
+    display: grid;
+    grid-template-columns: 50px 1fr 36px;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+.filament-slider-row label {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    color: var(--text-tertiary);
+}
+.filament-slider-row input[type="range"] {
+    accent-color: var(--accent-secondary);
+    width: 100%;
+}
+.filament-value {
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+/* Right-panel collapsible cards. The card header is a flex row with the
+   h3 on the left and a chevron toggle on the right. The card body
+   collapses via max-height + opacity (same pattern as the on-screen
+   nav controls). */
+.collapsible-card .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+.collapsible-card .card-header h3 {
+    margin: 0;
+    flex: 1;
+}
+.card-collapse-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 1px solid var(--bg-tertiary);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms, color 160ms, border-color 160ms;
+}
+.card-collapse-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+.card-collapse-btn:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+.card-collapse-icon {
+    font-size: 12px;
+    line-height: 1;
+    transition: transform 200ms ease;
+    display: inline-block;
+}
+.card-collapse-btn[aria-expanded="false"] .card-collapse-icon {
+    transform: rotate(-90deg);
+}
+.card-body {
+    overflow: hidden;
+    max-height: 9999px; /* tall enough to never clip */
+    transition: max-height 240ms ease, opacity 200ms ease, margin-top 200ms ease;
+    opacity: 1;
+    margin-top: var(--spacing-sm);
+}
+.card-body.card-body--collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    pointer-events: none;
 }

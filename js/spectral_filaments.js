@@ -22,8 +22,13 @@
 (function () {
   'use strict';
 
-  const SEED_COUNT  = 192;  // ~5% of cells; cheap to integrate
-  const STEP_COUNT  = 18;   // line length in cells
+  // Param caps (M10.2). Pre-allocated geometry sizes to the upper bounds
+  // so setParams() changes only re-walk the lattice — no buffer reallocs.
+  const SEED_COUNT_MAX = 512;
+  const STEP_COUNT_MAX = 40;
+  // Live params; mutable via setParams().
+  let SEED_COUNT = 192;
+  let STEP_COUNT = 18;
   const STEP_SCALE  = 1.0;  // unit step on the lattice
   const STD4_NAMES  = ['STD4_X', 'STD4_Y', 'STD4_Z', 'STD4_W'];
 
@@ -36,9 +41,8 @@
   function _ensureMesh() {
     if (lineMesh) return lineMesh;
     if (!_scene) return null;
-    // Pre-allocate the geometry to (SEED_COUNT * STEP_COUNT) line segments
-    // worth of vertex slots. Two vertices per segment.
-    const maxSegments = SEED_COUNT * STEP_COUNT;
+    // Pre-allocate to the param caps so setParams() never reallocates.
+    const maxSegments = SEED_COUNT_MAX * STEP_COUNT_MAX;
     const positions = new Float32Array(maxSegments * 2 * 3);
     const colors    = new Float32Array(maxSegments * 2 * 3);
     const geom = new THREE.BufferGeometry();
@@ -184,7 +188,31 @@
     }
   }
 
+  function _clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
   window.SpectralFilaments = {
+    /**
+     * Update integration params and re-render. Both args optional.
+     * Out-of-range values are clamped to the buffer caps; geometry isn't
+     * reallocated (caps were sized to the maximums at mesh construction).
+     */
+    setParams(args) {
+      let dirty = false;
+      if (args && Number.isFinite(args.seedCount)) {
+        const v = Math.round(_clamp(args.seedCount, 16, SEED_COUNT_MAX));
+        if (v !== SEED_COUNT) { SEED_COUNT = v; dirty = true; }
+      }
+      if (args && Number.isFinite(args.stepCount)) {
+        const v = Math.round(_clamp(args.stepCount, 2, STEP_COUNT_MAX));
+        if (v !== STEP_COUNT) { STEP_COUNT = v; dirty = true; }
+      }
+      if (dirty && enabled) refresh();
+    },
+    getParams() {
+      return { seedCount: SEED_COUNT, stepCount: STEP_COUNT };
+    },
     init(scene, gameBoard) {
       if (_initRequested) return;
       _initRequested = true;
