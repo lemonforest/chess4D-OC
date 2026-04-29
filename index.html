@@ -476,6 +476,15 @@
                         ↷ REDO
                     </button>
                 </div>
+                <!-- M11.6: export the current game state + move history as
+                     a JSON file in chess-spectral's JSONL-fixture format
+                     (a `pieces` object mapping square index → piece value)
+                     plus a `moves` array. Round-trips through
+                     `chess_spectral.encoder_4d` for analysis. -->
+                <button class="btn btn-secondary btn-block" id="export-game-btn"
+                        title="Download the current position + move history as a JSON file. Pieces are in chess-spectral's JSONL fixture format (square_int → piece-letter); moves array gives the from/to coordinates of every move played.">
+                    ⬇ Export game (JSON)
+                </button>
             </section>
             
             <!-- Statistics -->
@@ -1453,6 +1462,141 @@
         box.addEventListener('change', function () {
           apply();
           try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
+    <!-- M11.6: Export game (current position + move history) as JSON in
+         chess-spectral's JSONL fixture format. The exported file can be
+         re-encoded by chess_spectral.encoder_4d.encode_4d for offline
+         analysis. Pawn axis is best-effort 'w' (chess-spectral requires
+         an axis suffix); user can post-edit if their position uses
+         y-oriented pawns. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var btn = document.getElementById('export-game-btn');
+        if (!btn) return;
+
+        // Map chess4D-OC piece type/team to chess-spectral piece-letter format.
+        // Non-pawns: K/Q/R/B/N (white) or k/q/r/b/n (black).
+        // Pawns: 'Pw' / 'Py' / 'pw' / 'py' — axis suffix required by FEN4 v1.
+        function pieceLetter(piece) {
+          if (!piece || !piece.type) return null;
+          var t = piece.type.toLowerCase();
+          var teamWhite = (piece.team === 0); // 0 = white, 1 = black in chess4D-OC
+          var letterMap = {
+            king: 'K', queen: 'Q', rook: 'R', bishop: 'B', knight: 'N',
+          };
+          if (t === 'pawn') {
+            // chess4D-OC doesn't track pawn axis explicitly; the canonical
+            // 4D-chess setup uses w-oriented pawns in most slabs. Default
+            // to 'w' as a best-effort. User can post-edit the JSON if
+            // their position uses y-oriented pawns.
+            return (teamWhite ? 'P' : 'p') + 'w';
+          }
+          var L = letterMap[t];
+          if (!L) return null;
+          return teamWhite ? L : L.toLowerCase();
+        }
+
+        function buildPiecesObject() {
+          var pieces = {};
+          if (!window.gameBoard || !window.gameBoard.pieces) return pieces;
+          var board = window.gameBoard.pieces;
+          for (var x = 0; x < 8; x++) {
+            for (var y = 0; y < 8; y++) {
+              for (var z = 0; z < 8; z++) {
+                for (var w = 0; w < 8; w++) {
+                  var p = board[x][y][z][w];
+                  if (!p || !p.type) continue;
+                  var letter = pieceLetter(p);
+                  if (!letter) continue;
+                  // chess-spectral square index: ((x*8+y)*8+z)*8+w
+                  var sq = ((x * 8 + y) * 8 + z) * 8 + w;
+                  pieces[String(sq)] = letter;
+                }
+              }
+            }
+          }
+          return pieces;
+        }
+
+        function buildFen4(piecesObj) {
+          // Build "4d-fen v1: <piece>@<x>,<y>,<z>,<w>; ..." string.
+          var parts = [];
+          for (var sqStr in piecesObj) {
+            if (!Object.prototype.hasOwnProperty.call(piecesObj, sqStr)) continue;
+            var sq = parseInt(sqStr, 10);
+            var w = sq & 7;
+            var z = (sq >> 3) & 7;
+            var y = (sq >> 6) & 7;
+            var x = (sq >> 9) & 7;
+            parts.push(piecesObj[sqStr] + '@' + x + ',' + y + ',' + z + ',' + w);
+          }
+          return '4d-fen v1: ' + parts.join('; ');
+        }
+
+        function buildMoveList() {
+          var list = [];
+          if (!window.moveManager || !window.moveManager.moveHistory) return list;
+          // toList includes the root sentinel as element 0; skip it.
+          var moves = window.moveManager.moveHistory.toList();
+          for (var i = 1; i < moves.length; i++) {
+            var m = moves[i];
+            if (!m) continue;
+            list.push({
+              turn: i,
+              team: (i - 1) % 2 === 0 ? 'white' : 'black',
+              from: [m.x0, m.y0, m.z0, m.w0],
+              to:   [m.x1, m.y1, m.z1, m.w1],
+              metaData: m.metaData || {},
+            });
+          }
+          return list;
+        }
+
+        btn.addEventListener('click', function () {
+          var pieces = buildPiecesObject();
+          var fen4 = buildFen4(pieces);
+          var moves = buildMoveList();
+          var payload = {
+            format: 'chess4D-OC game export v1',
+            exported_at: new Date().toISOString(),
+            chess_spectral_compatible: true,
+            current_position: {
+              fen4: fen4,
+              pieces: pieces,
+              piece_count: Object.keys(pieces).length,
+            },
+            moves: moves,
+            notes: [
+              'pieces is the chess-spectral JSONL fixture format: ' +
+                'square_int (((x*8+y)*8+z)*8+w) -> piece-letter.',
+              'fen4 is the FEN4 v1 placement-literal format ' +
+                '(see chess_spectral.fen_4d.parse).',
+              'Pawn axis defaults to w (chess4D-OC doesn\'t track ' +
+                'orientation explicitly); edit Pw/pw -> Py/py if needed.',
+              'moves are in chronological order; each is { turn, ' +
+                'team, from, to, metaData }.',
+            ],
+          };
+          var json = JSON.stringify(payload, null, 2);
+          var blob = new Blob([json], { type: 'application/json' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          var stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\.\d+Z?$/, '');
+          a.href = url;
+          a.download = 'chess4d-oc-game-' + stamp + '.json';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // Revoke after a tick — Chrome needs a moment to start the download.
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+          console.log(
+            '[m11.6/export] downloaded ' + a.download +
+              ' (' + Object.keys(pieces).length + ' pieces, ' +
+              moves.length + ' moves)'
+          );
         });
       });
     </script>
