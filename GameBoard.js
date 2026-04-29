@@ -104,6 +104,8 @@ GameBoard.prototype = {
 						if (window.SpectralFilaments) window.SpectralFilaments.refresh();
 						// M11.3.6: tinted board cells overlay
 						if (window.SpectralBoardTint) window.SpectralBoardTint.refresh();
+						// M11.3.1: nested isosurface shells
+						if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.refresh();
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -126,6 +128,8 @@ GameBoard.prototype = {
 						if (res && res.ok) {
 							if (window.SpectralHeatmap) window.SpectralHeatmap.refresh();
 							if (window.SpectralFilaments) window.SpectralFilaments.refresh();
+							if (window.SpectralBoardTint) window.SpectralBoardTint.refresh();
+							if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.refresh();
 						}
 					}).catch((err) => {
 						console.warn('[m10] bridge.applyMove error', err);

@@ -69,6 +69,7 @@
         'js/spectral_overlay.js',
         'js/spectral_heatmap.js',
         'js/spectral_board_tint.js',
+        'js/spectral_isosurfaces.js',
         'js/topology4d.js',
         'js/spectral_filaments.js',
       ];
@@ -299,6 +300,17 @@
                     <label title="Replace the white/black checkerboard with spectral colors. Each cell is painted by the active channel's value. Pieces remain visible above the tinted surface; cloud and filaments compose naturally on top.">
                         <input type="checkbox" id="board-tint">
                         Tint board cells by channel
+                    </label>
+                </div>
+                <!-- M11.3.1: nested isosurface shells (Mathematica-style).
+                     Marching cubes per w-slice at 50/75/90th percentiles —
+                     three nested translucent shells that surface the
+                     iso-shape of the field. Best with 'Hide chess boards'
+                     so the shells aren't occluded by the boards. -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Nested marching-cubes shells at 50/75/90th-percentile thresholds, computed per w-slice (8 slabs × 3 shells = 24 meshes). Smooth iso-shape view of the field. Pair with 'Hide chess boards' for unobstructed view.">
+                        <input type="checkbox" id="board-isosurfaces">
+                        Smooth isosurface shells
                     </label>
                 </div>
                 <!-- M11.1: heatmap statistics options. log1p compresses
@@ -871,6 +883,10 @@
           // Tint only paints when channel is a real channel name (not 'off').
           if (channel && channel !== 'off') window.SpectralBoardTint.setChannel(channel);
         }
+        function pushChannelToIso(channel) {
+          if (!window.SpectralIsosurfaces || typeof window.SpectralIsosurfaces.setChannel !== 'function') return;
+          if (channel && channel !== 'off') window.SpectralIsosurfaces.setChannel(channel);
+        }
         if (sigSelect) {
           try {
             var hf = new URLSearchParams(location.search).get('heatmap');
@@ -884,10 +900,12 @@
             }
             pushChannelToFilaments(v);
             pushChannelToTint(v);
+            pushChannelToIso(v);
           });
           // Initial sync — covers the ?heatmap= URL param case.
           pushChannelToFilaments(sigSelect.value);
           pushChannelToTint(sigSelect.value);
+          pushChannelToIso(sigSelect.value);
         }
         var filCheck = document.getElementById('board-filaments');
         var filParams = document.getElementById('filament-params');
@@ -939,6 +957,15 @@
           if (initial !== null) topoCheck.checked = initial;
           if (window.SpectralFilaments) window.SpectralFilaments.setTopologyMode(topoCheck.checked);
           topoCheck.addEventListener('change', function () {
+            // M11.3.7 UX fix: topology mode is the SEEDING strategy of the
+            // filament system; if the user hasn't also enabled filaments,
+            // toggling topology alone draws nothing. Auto-enable filaments
+            // when topology is checked so the result is immediately visible.
+            if (topoCheck.checked && filCheck && !filCheck.checked) {
+              filCheck.checked = true;
+              if (window.SpectralFilaments) window.SpectralFilaments.setEnabled(true);
+              syncFilParamsVisibility();
+            }
             if (window.SpectralFilaments) window.SpectralFilaments.setTopologyMode(topoCheck.checked);
             try { localStorage.setItem(TOPO_KEY, topoCheck.checked ? '1' : '0'); } catch (_) {}
           });
@@ -1376,6 +1403,33 @@
       });
     </script>
 
+    <!-- M11.3.1: smooth-isosurface checkbox. URL flag ?isosurfaces=1 + localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('board-isosurfaces');
+        if (!box) return;
+        var KEY = 'chess4d-oc.isosurfaces';
+        var initial = null;
+        try {
+          var u = new URLSearchParams(location.search).get('isosurfaces');
+          if (u === '1' || u === 'on') initial = true;
+          if (initial === null) {
+            var v = localStorage.getItem(KEY);
+            if (v === '1') initial = true; else if (v === '0') initial = false;
+          }
+        } catch (_) {}
+        if (initial !== null) box.checked = initial;
+        function apply() {
+          if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.setEnabled(box.checked);
+        }
+        apply();
+        box.addEventListener('change', function () {
+          apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
     <!-- M11.3.6: spectral-tint checkbox. URL flag ?boardTint=1 + localStorage. -->
     <script>
       window.addEventListener('chess4d-app-ready', function () {
@@ -1429,6 +1483,9 @@
           }
           if (window.SpectralBoardTint && typeof window.SpectralBoardTint.setStackScale === 'function') {
             window.SpectralBoardTint.setStackScale(s);
+          }
+          if (window.SpectralIsosurfaces && typeof window.SpectralIsosurfaces.setStackScale === 'function') {
+            window.SpectralIsosurfaces.setStackScale(s);
           }
           window.__GAME_DIRTY__ = true;
         }

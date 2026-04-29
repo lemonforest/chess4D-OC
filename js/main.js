@@ -1015,6 +1015,11 @@ function initializeGame() {
                         try { window.SpectralBoardTint.init(scene, gameBoard); }
                         catch (err) { console.warn('[m11.3.6/tint] init error:', err); }
                     }
+                    // M11.3.1 — nested isosurface shells (Mathematica-style).
+                    if (typeof window !== 'undefined' && window.SpectralIsosurfaces) {
+                        try { window.SpectralIsosurfaces.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m11.3.1/iso] init error:', err); }
+                    }
                     
                     setTimeout(() => {
                         updateLoadingText('Ready!');
