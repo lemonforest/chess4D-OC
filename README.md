@@ -153,6 +153,41 @@ An interior cell (not on any boundary) has exactly **3⁴ - 1 = 80 adjacent neig
 - **W-oriented pawns**: Move forward along W-axis, capture in XW-plane
 - **Promotion**: Occurs at terminal boundary of forward axis (y=8 or w=8 for White)
 
+### Phase-Domain Counterpart (chess-spectral)
+
+The same piece movement rules in their **phase-domain (Fourier-domain) form**, as implemented in [`chess_spectral.phase_operators_4d`](https://pypi.org/project/chess-spectral/). Each lattice point `(x,y,z,w) ∈ {0..7}⁴` maps to a phase `φ(x,y,z,w) ∈ Z/145451Z` via a perfect-hash construction; piece operators become integer translations on that finite cyclic group.
+
+#### Phase Map
+
+```
+φ(x, y, z, w) = (x · g_x + y · g_y + z · g_z + w · g_w)  mod  M
+
+   where  M = 145451  (prime)
+          g_x = 9719,  g_y = 647,  g_z = 43,  g_w = 3
+```
+
+Constructed via a mixed-radix tower with **ladder coefficient 14** (twice the per-axis bound of 7, so that differences of any two operator-emitted shifts in `[-7, 7]` per component avoid Diophantine collision). The 4096 lattice cells map to 4096 distinct residues out of 145451 — a perfect hash. Verified by `test_phase_4d_design.test_c2_image_is_4096_distinct_residues`.
+
+#### Phase Operators
+
+For each piece, `P_piece(φ)` returns the set of phase values reachable from the origin phase `φ`. The destination set in lattice coordinates is recovered by inverting `φ` (a downstream concern — boundary clipping is handled by `phase_to_coords_4d.invert`).
+
+| Piece | Phase operator | Notes |
+|---|---|---|
+| **Rook** | `P_rook(φ) = { φ ± k·g_i : i ∈ {x,y,z,w}, k ∈ {1..7} }` | 4 axes × 2 signs × 7 distances = **56 phase shifts** (28 on-board destinations from interior) |
+| **Bishop** | `P_bishop(φ) = { φ + k·(s_i·g_i + s_j·g_j) : i<j, s_i,s_j ∈ ±1, k ∈ {1..7} }` | 6 plane choices × 4 sign combos × 7 distances = **168 phase shifts**; 2 connected components from `(x+y+z+w) mod 2` parity |
+| **Queen** | `P_queen(φ) = P_rook(φ) ∪ P_bishop(φ)` | Up to **56 + 168 = 224** disjoint phase shifts (no overlap of direction sets) |
+| **King** | `P_king(φ) = { φ + Σᵢ εᵢ·gᵢ : ε ∈ {-1,0,+1}⁴ \ {0} }` | **80 directional shifts** (3⁴ − 1 ternary sign vectors), used at k=1 |
+| **Knight** | `P_knight(φ) = { φ + 2·gᵢ + gⱼ : i ≠ j, signs ∈ ±2 × ±1 }` | **48 shifts** (12 ordered axis pairs × 4 sign combos), leaper at k=1 only |
+| **Pawn (white, axis r)** | Forward push: `φ + g_r` (also `+2g_r` from starting rank); diagonal captures: `φ ± g_x + g_r` | r ∈ {y, w} only, never z; per Oana & Chiru §3.10 Def 13 |
+| **Pawn (black, axis r)** | Same with `-g_r` instead of `+g_r` | |
+
+#### Why It Works
+
+The ladder-coefficient-14 design is a key correctness invariant: shifts have components in `[-7, 7]` per axis, so differences span `[-14, 14]`. The construction `g_w = 3`, `g_z = next_prime(14·g_w + 1) = 43`, `g_y = next_prime(14·(g_w+g_z) + 1) = 647`, `g_x = next_prime(14·(g_w+g_z+g_y) + 1) = 9719`, with `M = 7·sum + 7·(g_x + g_y) + 1 = 145451 prime`, guarantees `|Σᵢ Δᵢ·gᵢ| < M` for any nonzero `Δ ∈ [-14,14]⁴` — modular reduction is a no-op, so distinct piece moves can't alias to the same destination phase. **Result**: O(1) "what cells can this piece reach?" via integer arithmetic, no lookup tables at runtime.
+
+> **Note on framing.** The "phase" in chess-spectral is **integer arithmetic on Z/M·Z** (a finite cyclic group), not a complex-amplitude phase as in quantum mechanics. The encoder's 11 channels are real-valued graph-Laplacian DCT coefficients on the 4D lattice — graph signal processing, not Schrödinger evolution. The visualization layers (heatmap cloud, filaments, isosurfaces, topology mode) all render real scalar/vector fields on the discrete hypercube.
+
 ---
 
 ## 🚀 Getting Started
@@ -232,35 +267,62 @@ Some browsers may block local file access. A local server is recommended.
 ## 📂 Project Structure
 
 ```
-4d_chess/
-├── index.html              # Entry point and UI
-├── README.md              # This file
+chess4D-OC/
+├── index.html                  # Entry point + UI + script loader (Three.js r184 ES module + import map)
+├── README.md                   # This file
+├── CLAUDE.md                   # Orientation for Claude Code agents
+├── NOTICE                      # Runtime-aggregation licensing posture
+├── _headers                    # Cloudflare Pages COOP/COEP headers (M2)
+├── package.json                # Dev-only deps (eslint, html-validate, playwright)
 │
 ├── css/
-│   └── main.css           # Dark mode styling
+│   └── main.css                # Dark-mode styling, panel layouts, collapsibles
 │
 ├── js/
-│   ├── main.js            # Game initialization and loop
-│   ├── Bot.js             # AI opponent implementation
-│   ├── tutorial.js        # Interactive tutorial system
+│   ├── main.js                 # Scene setup, game loop, camera, raycaster, render-on-demand
+│   ├── Bot.js                  # AI opponent
+│   ├── tutorial.js             # Interactive tutorial system
+│   ├── Animation.js            # Move animations
+│   ├── PieceMovement.js        # Move execution helpers
+│   ├── comprehensiveTutorial.js
 │   │
-│   └── pieces/            # Piece classes
-│       ├── Piece.js       # Base piece class
-│       ├── Pawn.js        # 4D pawn with Y/W orientation
-│       ├── Rook.js        # 4D rook (28 moves)
-│       ├── Bishop.js      # 4D bishop (parity-preserving)
-│       ├── Knight.js      # 4D knight (48 moves interior)
-│       ├── Queen.js       # 4D queen (rook + bishop)
-│       └── King.js         # 4D king (80 neighbors)
+│   ├── pieces/                 # Piece classes (M4b deletion candidates — Pyodide is now legality oracle)
+│   │   ├── Piece.js            # Base piece class
+│   │   ├── Pawn.js             # 4D pawn with Y/W orientation
+│   │   ├── Rook.js             # 4D rook (28 moves)
+│   │   ├── Bishop.js           # 4D bishop (parity-preserving)
+│   │   ├── Knight.js           # 4D knight (48 moves interior)
+│   │   ├── Queen.js            # 4D queen (rook + bishop)
+│   │   └── King.js             # 4D king (80 neighbors)
+│   │
+│   ├── obj_pieces_lowpoly/     # 80% triangle-decimated piece OBJs (?quality=low default)
+│   │
+│   ├── spectral_bridge.js      # M3+ Web Worker RPC client (postMessage envelope)
+│   ├── spectral_worker.js      # M3+ Pyodide host: chess-spectral + chess4d via micropip
+│   │
+│   ├── spectral_overlay.js     # M5 hover spectral preview (channel-tinted destinations)
+│   ├── spectral_heatmap.js     # M10 + M11 volumetric cloud (BoxGeometry InstancedMesh, viridis ramp)
+│   ├── spectral_board_tint.js  # M11.3.6 board-cell tint (colored quads on board surface)
+│   ├── spectral_isosurfaces.js # M11.3.1 nested marching-cubes shells (50/75/90 percentiles)
+│   ├── spectral_filaments.js   # M10 + M11.2 streamline filaments + topology mode (Morse-Smale)
+│   └── topology4d.js           # M11.2 critical-point detection + 4×4 Hessian Jacobi eigen-solver
 │
-├── GameBoard.js           # 4D board logic and state
-├── MoveManager.js          # Move validation and history
-├── Models.js               # 3D model loader (OBJ format)
+├── GameBoard.js                # 4D board scene, move dispatch, applyMove → spectral refresh chain
+├── MoveManager.js              # Move history (DMoveList tree), undo/redo
+├── Models.js                   # OBJ model loader, shared materials, M7d InstancedMesh path
 │
-└── models/                # 3D piece models
-    ├── *.obj              # OBJ model files
-    └── *.model.json       # Model metadata
+├── tests/
+│   ├── smoke.spec.js           # Playwright smoke against Cloudflare preview URL
+│   └── parity-corpus.json      # Reserved for M3.5 parity harness (not yet wired)
+│
+├── .github/
+│   └── workflows/              # CodeQL, lint, smoke (M1–M3.5)
+│
+└── docs/
+    └── repo-setup.md           # One-time GitHub UI clicks: branch protection, Cloudflare Pages
 ```
+
+**File count expectations**: ~50 JS files (incl. existing piece classes pending M4b deletion), 11 spectral-layer modules + topology helper added in M3 → M11.3, 1 worker, 1 main + scene controller. Model assets live in `js/obj_pieces_lowpoly/`. The repo is intentionally bundler-free — every file in this tree is loaded as a `<script>` in the order set by the `APP_SCRIPTS` array in `index.html`.
 
 ---
 
@@ -376,6 +438,11 @@ Beyond gameplay, this framework serves as:
 - **Visualization**: 64 simultaneous boards create visual density challenges
 - **Cognitive load**: Tracking 4D moves requires spatial reasoning skills
 - **AI strength**: Current bot uses basic minimax with material/mobility heuristic
+
+### Quirks (intentional, documented for clarity)
+
+- **Game timer is mode-agnostic.** The clock starts on page load and continues running across game-mode switches (Two Players ↔ vs Bot ↔ Watch Bots). The same pieces stay on the board through a mode switch, so a single position can be played by any combination of human and bot — for example, you can switch from "Two Players" to "Watch Bots" mid-game and let the bots pick up where humans left off. The timer reflects total wall-clock time at the position, not "human time" or "bot time" specifically. This is by design; **the player on each turn is whoever's mode is currently active**, not a fixed entity bound to game start.
+- **Devtools docking shifts the canvas.** Chrome's docked DevTools panel (bottom or right) reclaims viewport space without firing a canvas resize, so the rendered scene appears off-center. Undock DevTools (or move it to a separate window) to recenter. Not a chess4D-OC bug — see the [CLAUDE.md non-issue note](CLAUDE.md#known-non-issues-dont-waste-a-pr-on-these).
 
 ---
 
