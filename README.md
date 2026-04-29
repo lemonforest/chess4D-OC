@@ -462,6 +462,17 @@ The paper provides:
 4. Reproducible engine and visualization
 5. Complete enumeration and empirical validation
 
+### Source of the chess4D-OC fork's spectral additions
+
+The phase-operator framework + spectral encoder + visualization design that this fork layers on top of the upstream are derived from research notebooks maintained alongside [`chess-spectral`](https://pypi.org/project/chess-spectral/):
+
+- **`chess_spectral_research_notebook.md`** — design rationale for the phase-operator construction (cyclic-group hash on Z/145451·Z, ladder-coefficient-14 mixed-radix tower, generator selection), the encoder's 11-channel layout (A1 / STD4_X-Y-Z-W / FIB_SYM_1-2-3 / FA_PAWN_W-Y / FD_DIAG), and the operator-algebra background that makes the M12 commutator visualization meaningful.
+- **`chess_spectral_4d_notebook.md`** — 4D-specific extensions: per-piece phase operators (rook, bishop, queen, king, knight, two-axis pawn), the `phi4` perfect-hash construction, the M11.2 Morse-Smale topology layer's mathematical basis, and the streamline integration math the M10/M11 filaments visualize.
+
+Both notebooks live in [the `mlehaptics` repository](https://github.com/lemonforest/mlehaptics) under `docs/chess-maths/`. The chess-spectral PyPI package is the runtime artifact of these notebooks; chess4D-OC is the interactive frontend.
+
+When the notebooks update, the relevant chess4D-OC docs (this README's spectral sections, [`docs/qm_4d_design.md`](docs/qm_4d_design.md), [`docs/bridge_api.md`](docs/bridge_api.md), and the in-app help popover) get re-synced.
+
 ---
 
 ## 🔬 Research Applications
