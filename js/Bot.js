@@ -428,6 +428,32 @@ const Bot = {
                 move.x0, move.y0, move.z0, move.w0,
                 move.x1, move.y1, move.z1, move.w1
             );
+            // M11.7: auto-select the bot's moved piece so the spectral
+            // overlay continues to show during bot-vs-bot (and vs-bot)
+            // games. Without this, the cloud + tint + filaments still
+            // refresh on each move (since they trigger off applyMove),
+            // but the per-piece HOVER overlay (M5) never fires —
+            // because no human is clicking. Auto-select gives the user
+            // a continuous spectral story as the bots play.
+            //
+            // Only fires when window.currentGameMode is 'bot-vs-bot' or
+            // 'vs-bot'; the singleplayer (Two Players) mode keeps the
+            // existing click-to-select flow intact.
+            const mode = (typeof window !== 'undefined') ? window.currentGameMode : null;
+            const isBotMode = (mode === 'bot-vs-bot' || mode === 'vs-bot');
+            if (isBotMode) {
+                // Defer one animation frame so the move animation gets
+                // to start visually before we lock the highlight on.
+                setTimeout(function () {
+                    try {
+                        const moved = gameBoard.pieces[move.x1][move.y1][move.z1][move.w1];
+                        if (moved && moved.mesh && typeof window !== 'undefined' &&
+                            typeof window.selectPiece === 'function') {
+                            window.selectPiece(moved.mesh);
+                        }
+                    } catch (_) { /* best-effort; don't break the move loop */ }
+                }, 80);
+            }
             resolve(true);
         } catch (error) {
             console.error('Bot: Error executing move:', error);
