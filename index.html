@@ -68,6 +68,7 @@
         'js/main.js?v=2',
         'js/spectral_overlay.js',
         'js/spectral_heatmap.js',
+        'js/topology4d.js',
         'js/spectral_filaments.js',
       ];
 
@@ -260,6 +261,12 @@
                     <label>
                         <input type="checkbox" id="board-filaments">
                         Streamline filaments (follow signature gradient)
+                    </label>
+                </div>
+                <div class="spectral-control spectral-m10">
+                    <label title="Morse-Smale topology mode: lines emanate from each critical point (max / min / saddle) along the Hessian eigenvectors. Red = ascending manifold (toward peaks), blue = descending manifold (toward pits). Replaces the 'lines all converge to one spot' problem with a topological skeleton that surfaces structure.">
+                        <input type="checkbox" id="board-topology">
+                        Topology mode (Morse-Smale)
                     </label>
                 </div>
                 <div class="spectral-control spectral-m10">
@@ -771,6 +778,29 @@
             if (!window.SpectralFilaments) return;
             window.SpectralFilaments.setEnabled(filCheck.checked);
             syncFilParamsVisibility();
+          });
+        }
+        // M11.2: topology-mode toggle. Persisted in localStorage; URL flag
+        // ?topology=1 sets the default. Only meaningful when filaments are
+        // also enabled — but keeping this independent so users can pre-set
+        // the mode before turning filaments on.
+        var topoCheck = document.getElementById('board-topology');
+        if (topoCheck) {
+          var TOPO_KEY = 'chess4d-oc.topology-mode';
+          var initial = null;
+          try {
+            var u = new URLSearchParams(location.search).get('topology');
+            if (u === '1' || u === 'on') initial = true;
+            if (initial === null) {
+              var v = localStorage.getItem(TOPO_KEY);
+              if (v === '1') initial = true; else if (v === '0') initial = false;
+            }
+          } catch (_) {}
+          if (initial !== null) topoCheck.checked = initial;
+          if (window.SpectralFilaments) window.SpectralFilaments.setTopologyMode(topoCheck.checked);
+          topoCheck.addEventListener('change', function () {
+            if (window.SpectralFilaments) window.SpectralFilaments.setTopologyMode(topoCheck.checked);
+            try { localStorage.setItem(TOPO_KEY, topoCheck.checked ? '1' : '0'); } catch (_) {}
           });
         }
         if (filSeedSlider && filSeedValue) {
