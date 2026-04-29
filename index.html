@@ -299,6 +299,36 @@
                         Mark local maxima
                     </label>
                 </div>
+                <!-- M11.3: slice + threshold exploration. Slice axis pins one
+                     of the 4 lattice axes to a single integer value — the
+                     cloud collapses to a 3D cross-section through 4D. The
+                     threshold slider hides cells below a percentile floor,
+                     so sweeping it visualizes nested isosurface shells. -->
+                <div class="spectral-control spectral-m10">
+                    <label for="heatmap-slice-axis">Slice axis:</label>
+                    <select id="heatmap-slice-axis" aria-label="Heatmap slice axis"
+                            title="Pin one lattice axis to a value to slice the 4D cloud down to a 3D cross-section.">
+                        <option value="off" selected>Off (full 4D)</option>
+                        <option value="x">X (left-right)</option>
+                        <option value="y">Y (height)</option>
+                        <option value="z">Z (depth)</option>
+                        <option value="w">W (4D)</option>
+                    </select>
+                </div>
+                <div class="spectral-control spectral-m10 spectral-filament-params" id="heatmap-slice-row" hidden>
+                    <div class="filament-slider-row">
+                        <label for="heatmap-slice-value">Slice value</label>
+                        <input type="range" id="heatmap-slice-value" min="0" max="7" step="1" value="4">
+                        <span class="filament-value" id="heatmap-slice-value-display">4</span>
+                    </div>
+                </div>
+                <div class="spectral-control spectral-m10 spectral-filament-params">
+                    <div class="filament-slider-row">
+                        <label for="heatmap-threshold" title="Hide cells below this normalized intensity. 0 = show all, 0.95 = top 5% only. Sweeping reveals nested shells.">Threshold</label>
+                        <input type="range" id="heatmap-threshold" min="0" max="100" step="1" value="0">
+                        <span class="filament-value" id="heatmap-threshold-display">0%</span>
+                    </div>
+                </div>
                 <div class="spectral-control spectral-m10 spectral-filament-params" id="filament-params" hidden>
                     <div class="filament-slider-row">
                         <label for="filament-seed-count">Seeds</label>
@@ -883,6 +913,101 @@
         bind('heatmap-maxima', 'maxima', 'heatmapMaxima',    '1', function (on) {
           if (window.SpectralHeatmap) window.SpectralHeatmap.setShowLocalMaxima(on);
         });
+
+        // M11.3: slice axis dropdown + slice value slider + threshold slider.
+        // Wired separately because they're <select>/<range> not checkbox.
+        var sliceAxisSel = document.getElementById('heatmap-slice-axis');
+        var sliceValueSlider = document.getElementById('heatmap-slice-value');
+        var sliceValueDisplay = document.getElementById('heatmap-slice-value-display');
+        var sliceRow = document.getElementById('heatmap-slice-row');
+        var thresholdSlider = document.getElementById('heatmap-threshold');
+        var thresholdDisplay = document.getElementById('heatmap-threshold-display');
+        function pushSlice() {
+          if (!window.SpectralHeatmap) return;
+          var axis = sliceAxisSel ? sliceAxisSel.value : 'off';
+          var value = sliceValueSlider ? parseInt(sliceValueSlider.value, 10) : 4;
+          window.SpectralHeatmap.setSlice(axis === 'off' ? null : axis, value);
+        }
+        function syncSliceRow() {
+          if (!sliceRow || !sliceAxisSel) return;
+          if (sliceAxisSel.value === 'off') sliceRow.setAttribute('hidden', '');
+          else sliceRow.removeAttribute('hidden');
+        }
+        function pushThreshold() {
+          if (!window.SpectralHeatmap || !thresholdSlider) return;
+          var pct = parseInt(thresholdSlider.value, 10);
+          window.SpectralHeatmap.setIntensityThreshold(pct / 100);
+        }
+        // URL flags + localStorage for slice/threshold.
+        try {
+          var sParam = new URLSearchParams(location.search).get('heatmapSlice');
+          if (sParam && sliceAxisSel && sliceValueSlider) {
+            var p = sParam.split(':');
+            if (['x','y','z','w'].indexOf(p[0]) >= 0) {
+              sliceAxisSel.value = p[0];
+              if (Number.isFinite(parseInt(p[1], 10))) sliceValueSlider.value = p[1];
+            }
+          } else {
+            var sStored = localStorage.getItem('chess4d-oc.heatmap.slice');
+            if (sStored && sliceAxisSel) {
+              var sp = sStored.split(':');
+              if (['off','x','y','z','w'].indexOf(sp[0]) >= 0) sliceAxisSel.value = sp[0];
+              if (sp[1] && sliceValueSlider && Number.isFinite(parseInt(sp[1], 10))) {
+                sliceValueSlider.value = sp[1];
+              }
+            }
+          }
+          var tParam = new URLSearchParams(location.search).get('heatmapThreshold');
+          if (tParam && thresholdSlider && Number.isFinite(parseFloat(tParam))) {
+            thresholdSlider.value = String(Math.round(parseFloat(tParam) * 100));
+          } else {
+            var tStored = localStorage.getItem('chess4d-oc.heatmap.threshold');
+            if (tStored && thresholdSlider && Number.isFinite(parseInt(tStored, 10))) {
+              thresholdSlider.value = tStored;
+            }
+          }
+        } catch (_) {}
+        if (sliceValueDisplay && sliceValueSlider) sliceValueDisplay.textContent = sliceValueSlider.value;
+        if (thresholdDisplay && thresholdSlider) thresholdDisplay.textContent = thresholdSlider.value + '%';
+        syncSliceRow();
+        // Apply current values on init so URL/localStorage state reaches the module.
+        pushSlice();
+        pushThreshold();
+        if (sliceAxisSel) {
+          sliceAxisSel.addEventListener('change', function () {
+            syncSliceRow();
+            pushSlice();
+            try {
+              localStorage.setItem(
+                'chess4d-oc.heatmap.slice',
+                sliceAxisSel.value + ':' + (sliceValueSlider ? sliceValueSlider.value : '4')
+              );
+            } catch (_) {}
+          });
+        }
+        if (sliceValueSlider) {
+          sliceValueSlider.addEventListener('input', function () {
+            if (sliceValueDisplay) sliceValueDisplay.textContent = sliceValueSlider.value;
+          });
+          sliceValueSlider.addEventListener('change', function () {
+            pushSlice();
+            try {
+              localStorage.setItem(
+                'chess4d-oc.heatmap.slice',
+                (sliceAxisSel ? sliceAxisSel.value : 'off') + ':' + sliceValueSlider.value
+              );
+            } catch (_) {}
+          });
+        }
+        if (thresholdSlider) {
+          thresholdSlider.addEventListener('input', function () {
+            if (thresholdDisplay) thresholdDisplay.textContent = thresholdSlider.value + '%';
+          });
+          thresholdSlider.addEventListener('change', function () {
+            pushThreshold();
+            try { localStorage.setItem('chess4d-oc.heatmap.threshold', thresholdSlider.value); } catch (_) {}
+          });
+        }
       });
     </script>
 
