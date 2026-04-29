@@ -181,3 +181,105 @@ Is the goal **physics paper** (rigorous QM, prove axiom satisfaction, write a su
 - Gameplay → indicator basis, Born-rule sampling on every move, coherent superposition state model.
 
 For now this document records the design without committing to one path. Pick when ready.
+
+---
+
+## What chess-spectral 1.5 unlocks in chess4D-OC (the broader follow-up inventory)
+
+Author: 2026-04-29 conversation thread. The list below is what becomes possible across the chess4D-OC frontend once the QM module ships. Most items are gated on chess-spectral 1.5 actually existing; a few can be partially scoped now.
+
+### Tier 1 — Visualization layers (5–6 new modules)
+
+All gated on chess-spectral 1.5. Each is a sibling to the existing `spectral_*.js` modules and follows the same init/setEnabled/refresh API.
+
+| Slot | Module | What you'd see |
+|---|---|---|
+| **M14.1** | `js/spectral_qm_piece.js` | Per-piece `\|ψ_p\|²` overlay — hover any piece, see ITS probability cloud. Today the heatmap shows the global encoding; QM gives a per-piece distribution. |
+| **M14.2** | `js/spectral_qm_phase.js` | Phase-colored cloud — hue = `arg(ψ)`, saturation = `\|ψ\|²`. Current viridis/RdBu ramps lose phase info entirely. |
+| **M14.3** | `js/spectral_qm_evolution.js` | Coherent-superposition multi-lobe rendering + unitary-evolution animation. A move's `U_move` interpolates ψ(t) between turns. |
+| **M14.4** | `js/spectral_qm_entangle.js` | Entanglement coloring. Reduced density matrix `ρ_p = Tr_others(\|ψ⟩⟨ψ\|)`; pure ρ (rank 1) = independent, rank > 1 = entangled. Glow entangled pieces. |
+| **M14.5** | `js/spectral_qm_collapse.js` | Measurement-collapse animation. Click "measure" → cloud contracts to a delta function at one cell, weighted by Born probabilities. |
+| **M14.6** | `js/spectral_qm_current.js` | True QM probability current `j(c) = Im(ψ* ∇ψ)` filaments. Today's filaments are gradient flow of `\|ψ\|²` (semi-classical limit); QM gives the actual quantum current with phase circulation. |
+
+### Tier 2 — Bot AI
+
+Slots into the existing M13.2 strategy registry. New entries:
+
+| Strategy | Idea |
+|---|---|
+| **`qm-expectation-eval`** | Use `⟨ψ\|H\|ψ⟩` for a chosen Hermitian as eval. Multiple H's available (material, mobility, center, custom). Selectable via UI dropdown alongside the strategy choice. |
+| **`quantum-monte-carlo`** | Born-weighted game-tree sampling. Each branch gets probability `\|⟨move\|U_search\|ψ⟩\|²`. Better than uniform-random branching for shallow searches. |
+
+### Tier 3 — Gameplay modes (substantial)
+
+| Slot | Mode | What it is |
+|---|---|---|
+| **M15.1** | Quantum Chess (4D) | Pieces in superposition; moves are unitary; observation collapses. First 4D version (Caltech / Spiros Michalakis built 2D in 2014). |
+| **M15.2** | Measurement game | Players don't make moves — they choose what to MEASURE. The state evolves under a fixed Hamiltonian; you reveal piece positions probabilistically. |
+| **M15.3** | Hybrid classical-quantum | Some pieces classical, some quantum, mixed gameplay. |
+
+### Tier 4 — Scientific output
+
+| Output | Path |
+|---|---|
+| **M16.1 — Physics paper** | "Discrete-lattice QM applied to 4D chess" — provided chess-spectral 1.5 ships with formal axiom verification. Conference fit: APS / SIGGRAPH viz track. |
+| **M16.2 — Pedagogy paper** | Chess as a vehicle for teaching finite-dim QM. Every piece = particle on a lattice; moves = unitary evolution; checkmate = collapse. |
+| **M16.3 — Conference demo** | Interactive WebGL/WebGPU 4D QM lattice. Free, runs in browser, no install. |
+
+### Tier 5 — Cross-pollination with existing layers
+
+The visualizations already shipped in chess4D-OC don't get replaced — they get **re-grounded** with QM as their underlying theory. No code changes required, just docs that re-explain what each layer represents:
+
+| Existing layer | Today's framing | QM framing |
+|---|---|---|
+| Heatmap cloud | Real graph-Laplacian DCT signature | `\|⟨x\|ψ⟩\|²` projection of QM state |
+| Filaments | Gradient flow of channel intensity | Semi-classical approximation to true QM probability current |
+| Topology mode | Morse-Smale on a real scalar field | Morse-Smale on `\|ψ\|²` (same math; cleaner theoretical interpretation) |
+| Isosurfaces | Percentile-thresholded shells | `\|ψ\|² = const` quantum density shells |
+| Hodge decomposition (M11.4) | Decomposition of STD4 vector field | Decomposition of QM probability current — the harmonic part is the topologically invariant gauge-field circulation |
+
+---
+
+## Architectural decision — engine algorithms belong in chess-spectral, not chess4D-OC
+
+User asked (2026-04-29): "the engine things I brought up a bit ago might should go in chess-spectral or no?" This section records the answer.
+
+### The decision
+
+**Yes**: search algorithms (alpha-beta, iterative deepening, transposition tables, MVV-LVA, killer moves) and position evaluation (material, spectral channel-energy, QM expectation-value) belong in `chess-spectral` — not in `chess4D-OC/Bot.js`.
+
+### Where things live
+
+| Layer | Repo | Why |
+|---|---|---|
+| Math primitives (phase ops, encoder, channel energies, QM ops) | chess-spectral | Already there; this is the library |
+| Search algorithms | chess-spectral (`chess_spectral.engine` submodule) | General algorithms; benefit other consumers (CLI, server-side play, paper benchmarks) |
+| Position evaluation functions | chess-spectral | Naturally Python-side; reads channel energies / ψ |
+| Self-play tournament harness | chess-spectral | Pure logic; benefits from Python's stats + testing tooling |
+| UI Bot.js (animations, visual feedback, async glue) | chess4D-OC | Becomes a thin ~50-LOC wrapper after migration |
+
+### What this means for what's already shipped
+
+**M13.1 (alpha-beta + TT) and M13.2 (multi-strategy framework) are not wasted.** They ship working in-browser engines TODAY without requiring a Python round-trip. They keep working until/unless we migrate to the chess-spectral side. The migration is value-add, not error-correction.
+
+### Performance — search-in-Python is fine
+
+The Pyodide bridge has 10–50 ms round-trip overhead per call. Naive worry: that's per evaluation, search will be slow. **Reality**: the search loop runs INSIDE Pyodide at native Python speed; only ONE bridge round-trip per move (the request-getBestMove call). The 10–50 ms overhead is amortized over the entire search.
+
+### Prerequisite
+
+**M4b.1 (chess4D-OC async cutover) gates everything.** Once all legality + state goes through the bridge, search-in-Python is the natural next step.
+
+### Updated sequencing (combining both repos)
+
+1. **chess-spectral 1.5** — QM kinematics + dynamics (separately scoped per the path decision above)
+2. **chess4D-OC M4b.1** — async cutover; delete JS legality, route through bridge.legalMoves
+3. **chess-spectral 1.6** — `chess_spectral.engine` submodule. Port alpha-beta + ID + TT + MVV-LVA from M13.1 to Python; bridge exposes `getBestMove(state, opts)`
+4. **chess4D-OC M13.4** — Bot.js becomes ~50-LOC thin wrapper around `bridge.getBestMove`
+5. **chess-spectral 1.7** — spectral channel-energy eval + self-play tournament harness
+6. **chess-spectral 1.8** — QM expectation-value eval (multiple H's: material, mobility, center, custom)
+7. **chess4D-OC M14.x** — QM visualization layers (Tier 1)
+8. **chess4D-OC M15.x** — Quantum Chess gameplay (Tier 3)
+9. **Both** — M16.x scientific output (Tier 4)
+
+Items 2, 4, 7, 8 are chess4D-OC scope (mine). Items 1, 3, 5, 6 are chess-spectral scope (yours). Item 9 is collaborative.
