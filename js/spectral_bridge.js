@@ -237,6 +237,15 @@
     // to 1.0 ± 1e-6 by Born-rule construction. M14.1 density overlay
     // consumes this directly.
     getQmDensity: () => applyChain.then(() => call('getQmDensity')),
+
+    // M11.28: PREVIEW-style apply_move_qm. Returns the assembled ψ_post
+    // for a hypothetical move WITHOUT mutating the underlying chess4d
+    // state. Use applyMove() for the actual game-state advance; this
+    // method is for visualization / single-move QM analysis.
+    //
+    // Returns: { ok, psi: Float32Array(90112), basisDim: 45056, normSq }
+    applyMoveQm: (origin, dest) =>
+      applyChain.then(() => call('applyMoveQm', { origin, dest })),
   };
   window.SpectralBridge = bridge;
 

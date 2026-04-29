@@ -942,6 +942,57 @@ _do_get_qm_density()
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
+
+  // Apply a unitary move operator to the current ψ. PREVIEW-style
+  // (M11.28): does NOT mutate our chess4d state. Returns the assembled
+  // post-move ψ for visualization / measurement / single-move analysis.
+  // The classical state advances only when applyMove() is called.
+  //
+  // Args: { origin: {x,y,z,w}, dest: {x,y,z,w} }
+  // Returns: { ok, psi: Float32Array(90112), basisDim: 45056, normSq }
+  //
+  // Wire format mirrors getQmState — psi[2k] = Re(ψ_k), psi[2k+1] = Im.
+  // basisDim = 45056 (always — included for symmetry with getQmState).
+  // Move format passed to upstream: ((x,y,z,w), (x,y,z,w)) coord-tuple
+  // form (the README documents both int-pair and coord-pair shapes).
+  applyMoveQm(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const origin = args && args.origin;
+    const dest   = args && args.dest;
+    if (!origin || !dest) {
+      throw new Error('applyMoveQm: requires { origin: {x,y,z,w}, dest: {x,y,z,w} }');
+    }
+    pyodide.globals.set('_amq_ox', origin.x | 0);
+    pyodide.globals.set('_amq_oy', origin.y | 0);
+    pyodide.globals.set('_amq_oz', origin.z | 0);
+    pyodide.globals.set('_amq_ow', origin.w | 0);
+    pyodide.globals.set('_amq_dx', dest.x | 0);
+    pyodide.globals.set('_amq_dy', dest.y | 0);
+    pyodide.globals.set('_amq_dz', dest.z | 0);
+    pyodide.globals.set('_amq_dw', dest.w | 0);
+    return pyodide
+      .runPython(
+        `
+def _do_apply_move_qm():
+    try:
+        from chess_spectral.qm_4d_bridge import apply_move_qm_full
+    except Exception as e:
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+    try:
+        from_coord = (int(_amq_ox), int(_amq_oy), int(_amq_oz), int(_amq_ow))
+        to_coord   = (int(_amq_dx), int(_amq_dy), int(_amq_dz), int(_amq_dw))
+        r = apply_move_qm_full(gs4, move=(from_coord, to_coord))
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_apply_move_qm()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
 };
 
 self.onmessage = async (event) => {
