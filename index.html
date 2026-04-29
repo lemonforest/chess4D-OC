@@ -605,6 +605,20 @@
                     <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
                         Different strategies = different play styles. Try ``smart`` vs ``aggressive`` for a real game; try ``random`` as a control.
                     </p>
+                    <!-- M11.28a: bot visual-pacing slider. Reduces the after-compute
+                         visual hold; compute time itself is unaffected. -->
+                    <div class="spectral-control" style="flex-direction: column; align-items: stretch; margin-top: 6px;">
+                        <label for="bot-pacing-slider" style="display: flex; justify-content: space-between;">
+                            <span>Visual pacing:</span>
+                            <span id="bot-pacing-readout">1200&nbsp;ms</span>
+                        </label>
+                        <input type="range" id="bot-pacing-slider" min="100" max="2000" step="50" value="1200"
+                               aria-label="Bot visual pacing in milliseconds"
+                               title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. The page may briefly freeze during 'smart' bot deep search — that's a JS engine limitation; M13.4 (chess-spectral 1.6 engine) will fix it for good." />
+                        <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
+                            Page may briefly freeze during smart-bot deep search. Yield-points keep the spinner moving and let the page repaint between depth iterations, but a single deep iteration still blocks the JS thread.
+                        </p>
+                    </div>
                 </div>
             </section>
 
@@ -1761,6 +1775,38 @@
           Bot.setStrategy(1, blackSel.value);
           try { localStorage.setItem(BK, blackSel.value); } catch (_) {}
         });
+
+        // M11.28a — bot pacing slider. Writes to RUNTIME_OVERRIDES.
+        // BOT_VISUAL_GATE_MS so Bot.makeMove reads the runtime value
+        // instead of TIMING.BOT_VISUAL_GATE_MS (the engineered default).
+        // Persists to localStorage; restored on reload.
+        var slider = document.getElementById('bot-pacing-slider');
+        var readout = document.getElementById('bot-pacing-readout');
+        if (slider && readout && window.RUNTIME_OVERRIDES) {
+          var PK = 'chess4d-oc.bot-pacing.visual-gate-ms';
+          // Restore saved value, clamping to slider range.
+          try {
+            var saved = parseInt(localStorage.getItem(PK), 10);
+            if (Number.isFinite(saved)) {
+              var smin = parseInt(slider.min, 10) || 100;
+              var smax = parseInt(slider.max, 10) || 2000;
+              saved = Math.max(smin, Math.min(smax, saved));
+              slider.value = String(saved);
+            }
+          } catch (_) {}
+          function applyPacing() {
+            var v = parseInt(slider.value, 10);
+            if (!Number.isFinite(v)) v = 1200;
+            window.RUNTIME_OVERRIDES.BOT_VISUAL_GATE_MS = v;
+            readout.textContent = v + ' ms';
+          }
+          applyPacing();
+          slider.addEventListener('input', applyPacing); // live update during drag
+          slider.addEventListener('change', function () {
+            applyPacing();
+            try { localStorage.setItem(PK, slider.value); } catch (_) {}
+          });
+        }
       });
     </script>
 
