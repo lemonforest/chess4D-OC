@@ -269,6 +269,19 @@
                         Topology mode (Morse-Smale)
                     </label>
                 </div>
+                <!-- M11.3.3: align-view-to-flow. Hofmann/Rieck/Sadlo trick:
+                     orient the camera so its view axis lies along the
+                     dominant Hessian eigenvector at the most prominent
+                     critical point. Streamlines tangent to the camera
+                     foreshorten to dots; structures perpendicular spread
+                     out perpendicular. Lets you "look down the flow" of
+                     the field. Tween smoothly via the animate-loop hook. -->
+                <div class="spectral-control spectral-m10">
+                    <button type="button" class="btn btn-secondary btn-block" id="align-view-to-flow"
+                            title="Aim the camera along the dominant flow direction at the field's most prominent critical point — streamlines aligned with the view foreshorten to dots, perpendicular structure spreads out (Hofmann/Rieck/Sadlo 2018).">
+                        ⤺ Align view to flow
+                    </button>
+                </div>
                 <div class="spectral-control spectral-m10">
                     <label>
                         <input type="checkbox" id="hide-boards">
@@ -1128,6 +1141,147 @@
           setCollapsed(nowCollapsed);
         });
       })();
+    </script>
+
+    <!-- M11.3.3: "Align view to flow" — orient the camera along the
+         dominant Hessian eigenvector at the most prominent critical
+         point of the active heat-map channel. Smoothly tween via a
+         Three.js Vector3 lerp registered on a 60Hz interval. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var btn = document.getElementById('align-view-to-flow');
+        if (!btn) return;
+
+        // Animation state — global so the animate() loop in main.js
+        // can drive it. We piggyback on __GAME_DIRTY__ to keep render-
+        // on-demand triggering frames during the lerp.
+        var anim = null; // { fromPos, toPos, fromTarget, toTarget, t, dur }
+
+        function startTween(toPos, toTarget, durMs) {
+          if (!window.camera || !window.controls) return;
+          anim = {
+            fromPos:    window.camera.position.clone(),
+            toPos:      toPos,
+            fromTarget: window.controls.target.clone(),
+            toTarget:   toTarget,
+            t:          0,
+            dur:        durMs || 700,
+            startedAt:  performance.now(),
+          };
+          step();
+        }
+        function step() {
+          if (!anim) return;
+          var now = performance.now();
+          var t = Math.min(1, (now - anim.startedAt) / anim.dur);
+          // Smooth easing (cosine ease-in-out).
+          var u = 0.5 - 0.5 * Math.cos(t * Math.PI);
+          if (window.camera && window.controls) {
+            window.camera.position.lerpVectors(anim.fromPos, anim.toPos, u);
+            window.controls.target.lerpVectors(anim.fromTarget, anim.toTarget, u);
+            window.controls.update();
+            window.__GAME_DIRTY__ = true;
+          }
+          if (t < 1) requestAnimationFrame(step);
+          else anim = null;
+        }
+
+        btn.addEventListener('click', async function () {
+          // Need a channel to detect critical points on. Use the
+          // active board-signature channel; fall back to A1 if "off"
+          // or STD4 (vector field — Hessian is undefined).
+          var sigSel = document.getElementById('board-signature');
+          var ch = (sigSel && sigSel.value && sigSel.value !== 'off' && sigSel.value !== 'STD4')
+            ? sigSel.value : 'A1';
+
+          if (!window.SpectralBridge || !window.__SPECTRAL_INFO__) {
+            console.warn('[m11.3.3] bridge not ready');
+            return;
+          }
+          if (!window.Topology4D) {
+            console.warn('[m11.3.3] Topology4D module unavailable');
+            return;
+          }
+          if (!window.gameBoard || !window.gameBoard.graphics) {
+            console.warn('[m11.3.3] gameBoard not ready');
+            return;
+          }
+          if (!window.camera || !window.controls) {
+            console.warn('[m11.3.3] camera not exposed');
+            return;
+          }
+
+          btn.disabled = true;
+          try {
+            var res = await window.SpectralBridge.getBoardEncoding([ch]);
+            if (!res || !res.ok) { console.warn('[m11.3.3] getBoardEncoding failed'); return; }
+            var arr = res.channels && res.channels[ch];
+            if (!arr || !arr.length) { console.warn('[m11.3.3] channel slice missing'); return; }
+
+            var cps = window.Topology4D.findCriticalPoints(arr);
+            if (!cps.length) { console.warn('[m11.3.3] no critical points found'); return; }
+
+            // Pick the most prominent critical point — largest |λ_max|.
+            var best = cps[0]; var bestMag = 0;
+            for (var i = 0; i < cps.length; i++) {
+              var cp = cps[i];
+              var m = Math.max(Math.abs(cp.eigvals[0]), Math.abs(cp.eigvals[3]));
+              if (m > bestMag) { bestMag = m; best = cp; }
+            }
+            // Within that critical point, pick the eigenvector with
+            // largest |λ| — that's the "dominant flow direction".
+            var topK = 0;
+            for (var k = 1; k < 4; k++) {
+              if (Math.abs(best.eigvals[k]) > Math.abs(best.eigvals[topK])) topK = k;
+            }
+            var v0 = best.eigvecs[topK*4+0], v1 = best.eigvecs[topK*4+1];
+            var v2 = best.eigvecs[topK*4+2], v3 = best.eigvecs[topK*4+3];
+
+            // World-space tangent: difference of two boardCoordinates
+            // calls along the eigenvector. eps=0.5 lattice units stays
+            // inside the cell so the difference is non-degenerate.
+            var gfx = window.gameBoard.graphics;
+            var P0 = gfx.boardCoordinates(best.x, best.y, best.z, best.w);
+            var eps = 0.5;
+            var P1 = gfx.boardCoordinates(
+              Math.max(0, Math.min(7, best.x + eps * v0)),
+              Math.max(0, Math.min(7, best.y + eps * v1)),
+              Math.max(0, Math.min(7, best.z + eps * v2)),
+              Math.max(0, Math.min(7, best.w + eps * v3))
+            );
+            var dirX = P1.x - P0.x, dirY = P1.y - P0.y, dirZ = P1.z - P0.z;
+            var dirLen = Math.hypot(dirX, dirY, dirZ);
+            if (dirLen < 1e-6) {
+              console.warn('[m11.3.3] degenerate flow direction; aborting align');
+              return;
+            }
+            dirX /= dirLen; dirY /= dirLen; dirZ /= dirLen;
+
+            // Preserve the user's current orbit distance so we don't
+            // teleport in/out — only ROTATE. The new camera position
+            // is target + dist * (-direction) so the camera looks ALONG
+            // the flow into the picked critical point.
+            var dist = window.camera.position.distanceTo(window.controls.target);
+            var toTarget = new window.THREE.Vector3(P0.x, P0.y, P0.z);
+            var toPos = new window.THREE.Vector3(
+              P0.x - dist * dirX,
+              P0.y - dist * dirY,
+              P0.z - dist * dirZ
+            );
+
+            console.log(
+              '[m11.3.3] align: cp=(' + best.x + ',' + best.y + ',' + best.z + ',' + best.w + ') ' +
+              'type=' + best.type + ' λ=' + best.eigvals[topK].toExponential(3) + ' ' +
+              'eigvec=(' + v0.toFixed(2) + ',' + v1.toFixed(2) + ',' + v2.toFixed(2) + ',' + v3.toFixed(2) + ')'
+            );
+            startTween(toPos, toTarget, 700);
+          } catch (err) {
+            console.warn('[m11.3.3] align error:', err);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
     </script>
 
     <!-- Right-panel collapsible cards (4D Navigation, 4D Chess Pieces).

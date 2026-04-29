@@ -670,6 +670,13 @@ async function setupThreeJS() {
     controls.addEventListener('change', () => {
         if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     });
+    // M11.3.3: expose camera + controls so the spectral overlay's
+    // "Align view to flow" handler can compose camera transforms.
+    // Top-level `let` doesn't auto-bind to window in script mode.
+    if (typeof window !== 'undefined') {
+        window.camera = camera;
+        window.controls = controls;
+    }
     controls.screenSpacePanning = true;  // Enable vertical panning (like CAD)
     controls.minDistance = 200;
     controls.maxDistance = 5000;
