@@ -77,11 +77,17 @@ _PIECE_GEN = {
     PieceType.KING:   king_moves,
 }
 
-def _legal_moves_for(state, origin):
-    """Filter pseudo-legal moves through GameState.push to drop ones that
-    leave the moving side's king in check (paper §3.4 Def 3). Returns a
-    list of Move4D. Note: pawn_moves reads pawn_axis off the board, so it
-    has the same (origin, color, board) signature as the other generators."""
+# Selects the legality oracle. 'spatial' (default) walks chess4d.pieces.*
+# generators and filters via state.push; 'phase' calls
+# chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d (the
+# Fourier-domain oracle) which already returns the king-not-in-check
+# filtered destinations. Set via setLegalityOps() handler.
+_legality_ops = 'spatial'
+
+def _legal_moves_spatial(state, origin):
+    """chess4d.pieces.* pseudo-legal generators + state.push filter.
+    The textbook approach: yield pseudo-legals, push each, drop those
+    that raise IllegalMoveError, pop and record the survivors."""
     piece = state.board.occupant(origin)
     if piece is None:
         return []
@@ -98,6 +104,46 @@ def _legal_moves_for(state, origin):
         state.pop()
         legal.append(m)
     return legal
+
+def _legal_moves_phase(state, origin):
+    """chess_spectral phase-operator oracle. Returns Move4D list. The
+    occupation-aware A variant already filters for own-king-not-attacked,
+    so no extra state.push pass is needed. Falls back to spatial if the
+    phase module isn't importable (e.g., missing wheel) so callers always
+    get a result."""
+    piece = state.board.occupant(origin)
+    if piece is None:
+        return []
+    try:
+        from chess_spectral.phase_operators_4d.occupation_aware_a_4d import (
+            occupation_aware_moves_a_4d,
+        )
+        dests = occupation_aware_moves_a_4d(state, origin, piece)
+    except Exception:
+        try:
+            from chess_spectral import phase_operators_4d as _po
+            dests = _po.occupation_aware_moves_a_4d(state, origin, piece)
+        except Exception:
+            return _legal_moves_spatial(state, origin)
+    moves = []
+    for d in dests:
+        try:
+            t = tuple(d)[:4]
+        except TypeError:
+            t = (
+                getattr(d, 'x', None), getattr(d, 'y', None),
+                getattr(d, 'z', None), getattr(d, 'w', None),
+            )
+        if any(v is None for v in t):
+            continue
+        moves.append(Move4D(from_sq=origin, to_sq=Square4D(int(t[0]), int(t[1]), int(t[2]), int(t[3]))))
+    return moves
+
+def _legal_moves_for(state, origin):
+    """Dispatch on _legality_ops. Default spatial."""
+    if _legality_ops == 'phase':
+        return _legal_moves_phase(state, origin)
+    return _legal_moves_spatial(state, origin)
 
 def _pieces_to_dicts(state):
     out = []
@@ -266,6 +312,24 @@ _history_len = 0
 _encoder_cache = None
 `);
     return { ok: true, history_len: 0 };
+  },
+
+  // Sets the legality oracle backend. 'spatial' = chess4d.pieces.* (default),
+  // 'phase' = chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d.
+  // Both produce the same legality result; differ in implementation domain
+  // (geometric ray-walks vs Fourier phase-ops) and theoretical perf
+  // characteristics. Phase falls back to spatial if the module isn't
+  // importable (missing wheel etc.).
+  setLegalityOps(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const ops = (args && (args.ops === 'phase' || args.ops === 'spatial')) ? args.ops : 'spatial';
+    pyodide.globals.set('_set_ops_value', ops);
+    pyodide.runPython(`
+global _legality_ops
+_legality_ops = _set_ops_value
+print(f'[py] legality oracle = {_legality_ops}')
+`);
+    return { ok: true, ops };
   },
 
   // applyMove({origin: {x,y,z,w}, dest: {x,y,z,w}, promotion?: 'queen'|'rook'|'bishop'|'knight'})
