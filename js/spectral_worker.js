@@ -201,6 +201,65 @@ def _legal_moves_bitboard(state, origin):
         return _legal_moves_spatial(state, origin)
     return moves
 
+def _legal_moves_laplacian(state, origin):
+    """Discrete-Laplacian eigenbasis legality oracle (chess-spectral 1.6.1).
+
+    The lattice's discrete Laplacian (Kron-sum of P_8 path-graph
+    Laplacians; eigenvectors form a DCT-style basis) doubles as a
+    structural lookup table for piece reach — the same eigenbasis the
+    spectral encoder uses to embed positions also tells you which
+    squares a piece-type can theoretically reach. We use
+    chess_spectral.spectral_legality_4d.reachable_targets_4d as the
+    candidate generator, then filter via state.push for occupation +
+    own-king-not-attacked, matching the spatial oracle's semantics.
+
+    Pawn limitation: the Laplacian oracle ships support for B/K/N/Q/R
+    but not P (pawn move rules are direction- and history-dependent
+    per Oana-Chiru §3 Def 11; not a clean structural-reach question).
+    Pawns fall through to the spatial oracle in this branch.
+
+    Falls back to spatial on any translation failure so callers always
+    get a result."""
+    piece = state.board.occupant(origin)
+    if piece is None:
+        return []
+    # Pawns: defer to spatial — Laplacian oracle doesn't model pawn rules.
+    if piece.piece_type == PieceType.PAWN:
+        return _legal_moves_spatial(state, origin)
+    try:
+        from chess_spectral.spectral_legality_4d import reachable_targets_4d
+    except Exception:
+        return _legal_moves_spatial(state, origin)
+    piece_char = _PIECE_CHAR.get(piece.piece_type)
+    if piece_char is None:
+        return _legal_moves_spatial(state, origin)
+    origin_sq = (int(origin.x) << 9) | (int(origin.y) << 6) | (int(origin.z) << 3) | int(origin.w)
+    try:
+        reachable = reachable_targets_4d(piece_char, origin_sq)
+    except Exception:
+        return _legal_moves_spatial(state, origin)
+    moves = []
+    for to_sq_int in reachable:
+        to_sq = Square4D(
+            (to_sq_int >> 9) & 7,
+            (to_sq_int >> 6) & 7,
+            (to_sq_int >> 3) & 7,
+            to_sq_int & 7,
+        )
+        # Cheap pre-filter: skip own-piece destinations (state.push would
+        # reject these anyway, but the test is much cheaper than push).
+        target = state.board.occupant(to_sq)
+        if target is not None and target.color == piece.color:
+            continue
+        m = Move4D(from_sq=origin, to_sq=to_sq)
+        try:
+            state.push(m)
+        except IllegalMoveError:
+            continue
+        state.pop()
+        moves.append(m)
+    return moves
+
 def _legal_moves_phase(state, origin):
     """chess_spectral phase-operator oracle. Returns Move4D list. The
     occupation-aware A variant already filters for own-king-not-attacked,
@@ -238,16 +297,22 @@ def _legal_moves_phase(state, origin):
 def _legal_moves_for(state, origin):
     """Dispatch on _legality_ops. Default spatial.
 
-    Three oracles available, all returning the same legal-move set
-    per chess-spectral 1.6.1's head-to-head validation:
-      - 'spatial'  : chess4d.pieces.* + state.push filter (default)
-      - 'phase'    : chess_spectral.phase_operators_4d Fourier oracle
-      - 'bitboard' : chess_spectral.spatial_4d.Board4D.legal_moves
+    Four oracles wireable — three from chess-spectral 1.6.1's
+    head-to-head-validated trio plus our chess4d.pieces.* baseline:
+      - 'spatial'   : chess4d.pieces.* + state.push filter (default)
+      - 'phase'     : chess_spectral.phase_operators_4d Fourier oracle
+      - 'bitboard'  : chess_spectral.spatial_4d.Board4D.legal_moves
+      - 'laplacian' : chess_spectral.spectral_legality_4d.reachable_targets_4d
+                      (structural piece-reach + state.push for occupation/check;
+                      pawns defer to spatial since the Laplacian oracle
+                      doesn't model pawn rules)
     """
     if _legality_ops == 'phase':
         return _legal_moves_phase(state, origin)
     if _legality_ops == 'bitboard':
         return _legal_moves_bitboard(state, origin)
+    if _legality_ops == 'laplacian':
+        return _legal_moves_laplacian(state, origin)
     return _legal_moves_spatial(state, origin)
 
 def _pieces_to_dicts(state):
