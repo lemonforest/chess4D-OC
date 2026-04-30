@@ -156,6 +156,51 @@ def _has_legal_moves_chess4d(state, color):
             return True
     return False
 
+def _legal_moves_bitboard(state, origin):
+    """chess_spectral.spatial_4d.Board4D.legal_moves() filtered by origin.
+
+    Translates state via FEN4 round-trip into the bitboard-backed
+    Board4D, enumerates legal moves, filters to ones from the queried
+    origin square, and converts back to chess4d.Move4D for the bridge
+    return shape.
+
+    Per the upstream 1.6.1 README, this oracle agrees with the spatial
+    and phase oracles by construction — chess-spectral validates all
+    three head-to-head against each other and against python-chess[4d].
+    The point of having three is that each is a standalone artifact for
+    studying how spatial motion can be encoded; for chess4D-OC's
+    legality decisions we just pick the fastest.
+
+    Falls back to the spatial oracle if any link in the translation
+    chain breaks (FEN4 serialization, Board4D import, etc.) so callers
+    always get a result."""
+    piece = state.board.occupant(origin)
+    if piece is None:
+        return []
+    try:
+        from chess_spectral.spatial_4d import Board4D
+    except Exception:
+        return _legal_moves_spatial(state, origin)
+    try:
+        fen4 = _state_to_fen4(state)
+        board = Board4D.from_fen(fen4)
+    except Exception:
+        return _legal_moves_spatial(state, origin)
+    origin_sq = (int(origin.x) << 9) | (int(origin.y) << 6) | (int(origin.z) << 3) | int(origin.w)
+    moves = []
+    try:
+        for m in board.legal_moves():
+            if int(m.from_sq) != origin_sq:
+                continue
+            ts = int(m.to_sq)
+            moves.append(Move4D(
+                from_sq=origin,
+                to_sq=Square4D((ts >> 9) & 7, (ts >> 6) & 7, (ts >> 3) & 7, ts & 7),
+            ))
+    except Exception:
+        return _legal_moves_spatial(state, origin)
+    return moves
+
 def _legal_moves_phase(state, origin):
     """chess_spectral phase-operator oracle. Returns Move4D list. The
     occupation-aware A variant already filters for own-king-not-attacked,
@@ -191,9 +236,18 @@ def _legal_moves_phase(state, origin):
     return moves
 
 def _legal_moves_for(state, origin):
-    """Dispatch on _legality_ops. Default spatial."""
+    """Dispatch on _legality_ops. Default spatial.
+
+    Three oracles available, all returning the same legal-move set
+    per chess-spectral 1.6.1's head-to-head validation:
+      - 'spatial'  : chess4d.pieces.* + state.push filter (default)
+      - 'phase'    : chess_spectral.phase_operators_4d Fourier oracle
+      - 'bitboard' : chess_spectral.spatial_4d.Board4D.legal_moves
+    """
     if _legality_ops == 'phase':
         return _legal_moves_phase(state, origin)
+    if _legality_ops == 'bitboard':
+        return _legal_moves_bitboard(state, origin)
     return _legal_moves_spatial(state, origin)
 
 def _pieces_to_dicts(state):

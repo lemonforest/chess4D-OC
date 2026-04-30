@@ -25,14 +25,18 @@
   const renderFlag = new URLSearchParams(location.search).get('renderer');
   window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
 
-  // Spatial vs phase legality oracle:
-  //   spatial — chess4d.pieces.{type}_moves + state.push filter (default; cheap)
-  //   phase   — chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d
-  //             (Fourier-domain; same legality result, mostly here for parity
-  //             validation since it's the same oracle the M5/M6 encoder is
-  //             founded on)
+  // Three legality oracles (1.6.1: all three in-house, head-to-head validated):
+  //   spatial  — chess4d.pieces.{type}_moves + state.push filter (default; cheap)
+  //   phase    — chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d
+  //              (Fourier-domain; same legality result, founded on the M5/M6
+  //              encoder's eigenbasis)
+  //   bitboard — chess_spectral.spatial_4d.Board4D.legal_moves (M11.32, 1.6.1+)
+  //              The "engineering lens" — bitboard4d primitive with magic-style
+  //              ray casting and per-piece attack tables. Fastest in principle;
+  //              chess4D-OC's gain is mostly nominal since legality lookup is
+  //              already cheap, but useful as a third parity oracle.
   const opsFlag = new URLSearchParams(location.search).get('legalityOps');
-  window.__LEGALITY_OPS__ = (opsFlag === 'phase') ? 'phase' : 'spatial';
+  window.__LEGALITY_OPS__ = ['phase', 'bitboard'].includes(opsFlag) ? opsFlag : 'spatial';
 
   // M7e feature flag: ?gpu= picks the renderer backend.
   //   webgl  — Three.js WebGLRenderer (default; broadly compatible)
