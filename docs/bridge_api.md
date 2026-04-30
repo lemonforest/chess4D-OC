@@ -4,13 +4,35 @@ Audited 2026-04-29 ahead of M4b.1 (chess4D-OC async cutover) and chess-spectral 
 
 The user said: *"we'll need to see what we opened up api wise and what we find we forgot. we always forget something"*. This is that audit.
 
-**Update 2026-04-29 (afternoon)**: chess-spectral **1.5.0 published to PyPI** at 19:18 UTC. Every `§17.1` QM and `§17.5` dev/debug method enumerated in the "Concrete asks" section below is **honored** in the upstream `chess_spectral.qm_4d_bridge` and `chess_spectral_4d.bridge` modules. The chess-spectral 1.6 engine module (`get_best_move`, `evaluate_position`, `run_tournament`) remains the **only outstanding ask**. Wire-up tracking:
+**Update 2026-04-29 (afternoon)**: chess-spectral **1.5.0 published to PyPI** at 19:18 UTC. Every `§17.1` QM and `§17.5` dev/debug method enumerated below is **honored** in the upstream `chess_spectral.qm_4d_bridge` and `chess_spectral_4d.bridge` modules. The 1.6 engine module remained an outstanding ask.
 
-- **M11.25 (this PR)** — bump worker pin to `chess-spectral>=1.5.0`; wire `getVersion` + `getEncoderShape` (safest read-only §17.5 methods).
-- **M11.26 (next)** — FEN4 round-trip layer; wire `getFen4State`, `loadFen4`, `getDrawStatus`, `hasLegalMoves`.
-- **M11.27** — QM kinematics (`getQmState`, `getQmDensity`).
-- **M11.28+** — QM dynamics (`applyMoveQmFull`, `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation`).
-- **M14.x (later, with human review)** — visualization layers consuming the QM API.
+**Update 2026-04-30**: chess-spectral **1.6.1 published**. The §16 ship-gate release adds:
+- **Engine surface**: `chess_spectral_4d.engine.search.search(board, evaluator, options) → SearchResult` (with `pv: List[Move4D]` principal variation), three evaluators (`material`, `qm`, `spectral`) at both 2D and 4D, plus tournament harness.
+- **Bitboard4D**: `chess_spectral.spatial_4d` with attack tables, ray tables, `Board4D` state — the fast move-gen primitive.
+- **Third legality oracle**: discrete-Laplacian eigenbasis (the same DCT-style basis the encoder uses, doubling as a legality lookup table).
+- **v5 wire format**: `chess_spectral.frame_v5` with three encoding modes (dense / per-channel / XOR-stream) — 7.23× compression over dense gzipped on 4D fixtures.
+- **`chess_spectral_4d.bridge.get_move_history`** helper for our M11.6 export feature.
+
+Wire-up tracking (chess4D-OC milestones):
+
+| | | |
+|---|---|---|
+| **M11.25** ✅ | bump pin → 1.5.0; wire `getVersion`, `getEncoderShape` | merged |
+| **M11.26** ✅ | FEN4 round-trip + `getFen4State`, `hasLegalMoves` | merged |
+| **M11.27** ✅ | QM kinematics: `getQmState`, `getQmDensity` | merged |
+| **M11.28** ✅ | `applyMoveQm` (preview-style ψ_post) | merged |
+| **M11.29** ✅ | QM dynamics: `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation` | merged |
+| **M14.1** ✅ | viz: `\|ψ\|²` density tint (consumes `getQmDensity`) | merged |
+| **M14.2** ✅ | viz: probability-current arrow glyphs (consumes `getProbabilityCurrent`) | merged |
+| **M11.31** | bump pin → 1.6.1 (canary) | this PR |
+| **M13.4** | Bot.js → bridge.getBestMove (engine search runs in Pyodide; fixes JS-thread freeze) | next |
+| **M11.32** | `_legal_moves_bitboard` via `spatial_4d` + `?legalityOps=bitboard` | after M13.4 |
+| **M11.33** | discrete-Laplacian oracle as 3rd `?legalityOps` option | after M11.32 |
+| **M14.3** | viz: density-matrix entanglement (consumes `getDensityMatrixOf`) | queued |
+| **M14.4** | viz: click-to-measure interaction (consumes `measureAt`) | queued |
+| **M14.5** (new) | viz: PV ghost-arrow overlay (consumes new `SearchResult.pv`) | queued |
+| **M14.6** (new) | viz: eval-breakdown debug bars (consumes `evaluate_breakdown`) | queued |
+| **M11.40** | drop chess4d; full migration to chess_spectral_4d state | end-state cleanup |
 
 ---
 
@@ -71,19 +93,21 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 
 ---
 
-## Missing for chess-spectral 1.6 (engine submodule)
+## chess-spectral 1.6.1 engine surface — **HONORED**, wire-up via M13.4
 
-These methods will need to be added when the engine module ships. Listed with proposed signatures so chess-spectral 1.6 has a contract to ship against:
+The §16 ship-gate release delivered every engine method we asked for, plus the bonus `pv: List[Move4D]` principal variation in `SearchResult`. Bridge wire-up planned for M13.4 (`getBestMove`) and follow-ups:
 
-| Proposed method | Args | Returns | Purpose |
+| Bridge method | Upstream symbol | Wire-up | Notes |
 |---|---|---|---|
-| `getBestMove(opts)` | `{ team, maxDepth?, timeBudgetMs?, evalType?, weights? }` | `{ ok, move: {x0,y0,z0,w0,x1,y1,z1,w1}, score, depth, elapsedMs }` | Run a Python-side search. Search loop runs at native speed inside Pyodide; one bridge round-trip per move. |
-| `evaluatePosition(opts)` | `{ team, evalType, weights? }` | `{ ok, score, breakdown? }` | Get eval score for the current state without searching. Useful for live position-strength readout. |
-| `runTournament(opts)` | `{ pairs: [(stratA, stratB)], nGames, maxMovesPerGame? }` | `{ ok, results: [{ stratA, stratB, wins, losses, draws }] }` | Self-play harness for tuning channel-energy / QM-eval weights. |
-| `applyMoveQuiet(origin, dest)` | `{x,y,z,w}` × 2 | `{ ok, undoToken }` | Search-only: apply without spectral refresh; return undo token. Or: keep search entirely Python-side and don't expose this. |
-| `getZobristHash()` | — | `bigint` | For JS-side TT. **Or skip** — if the engine is Python-side, transposition table is internal to chess-spectral and not exposed. |
+| `getBestMove(opts)` | `chess_spectral_4d.engine.search.search(board, evaluator, options)` | M13.4 | `evaluator` is one of `chess_spectral_4d.engine.eval.{material, qm, spectral}.evaluate`; `options` is `SearchOptions(max_depth, time_budget_ms, use_tt, use_mvv_lva, use_quiescence, quiescence_max_depth)` |
+| `evaluatePosition(opts)` | `chess_spectral_4d.engine.eval.{type}.evaluate(position, side_to_move, weights?)` | M13.4 | Sync, single eval call. `evaluate_breakdown` returns per-piece/channel decomposition. |
+| `runTournament(opts)` | `chess_spectral.engine.tournament.run_round_robin(agents, n_games, max_plies)` | M13.5 (later) | Returns Elo + per-game records. Long-running; not for browser UI. |
+| **bonus**: principal variation | `SearchResult.pv: List[Move4D]` | M14.5 | Bot's predicted line. Drives the "ghost arrow" preview overlay. |
+| **bonus**: eval breakdown | `evaluate_breakdown(pos, side_to_move, weights?) → Dict[str, float]` | M14.6 | Per-piece (qm) or per-channel (spectral) decomposition. Drives the eval-bar debug overlay. |
 
-**Engine-API design call**: with the engine in Python, we don't actually need `applyMoveQuiet` or `getZobristHash` — those are internals. The bridge surface for engine work is just **`getBestMove`** + **`evaluatePosition`** + **`runTournament`**. Three new methods.
+**Engine-API design note**: with the engine running in the Pyodide worker, we don't need `applyMoveQuiet` or `getZobristHash` — those are search internals. The bridge surface is `getBestMove` + `evaluatePosition` + `runTournament` + the two bonus consumers above.
+
+**Performance caveat**: the 4D engine docstring flags pure-Python move generation as slow (~250s at the 28-king starting position's 2152-move legal set). Pyodide is 2-5× slower than CPython. Practical search depths in-browser will be 1-2 ply at the starting position, deepening as material thins, with `time_budget_ms` as a hard cap. M11.32 (bitboard4d oracle) plus an internal-bitboard switch in chess-spectral's search is the path to deeper practical depths.
 
 ---
 

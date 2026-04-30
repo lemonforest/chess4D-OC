@@ -1,17 +1,23 @@
 // spectral_worker.js — Pyodide host running in a Web Worker.
 //
-// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.5.0) and
+// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.6.1) and
 // python-chess4d-oana-chiru (>=0.4.0), and exposes a small RPC surface to
 // the main thread via spectral_bridge.js.
 //
-// chess-spectral 1.5.0 (released 2026-04-29) ships:
-//   - chess_spectral.qm_4d           — kinematic QM (states, observables, B_4)
-//   - chess_spectral.qm_4d_dynamics  — unitary moves, evolve_under_h0
-//   - chess_spectral.qm_4d_bridge    — Pyodide-shaped §17.1 + §17.5 surface
-//   - chess_spectral_4d              — 4D game-state package, with .bridge module
-// All §17.5 dev/debug methods (get_version, get_encoder_shape, get_fen4_state,
-// load_fen4, has_legal_moves, etc.) plus §17.1 QM methods now available.
-// See docs/bridge_api.md for the wire-up plan.
+// chess-spectral 1.5.0 (released 2026-04-29) shipped the §17.1 + §17.5
+// QM surface; 1.6.1 (April 2026) adds the §16 ship-gate engine, bitboard
+// move-gen, and a third legality oracle:
+//   - chess_spectral.qm_4d           — kinematic QM (states, observables, B_4)  [1.5+]
+//   - chess_spectral.qm_4d_dynamics  — unitary moves, evolve_under_h0           [1.5+]
+//   - chess_spectral.qm_4d_bridge    — §17.1 QM + §17.5 dev/debug bridge        [1.5+]
+//   - chess_spectral_4d              — 4D game-state package + .bridge          [1.5+]
+//   - chess_spectral.spatial_4d      — Bitboard4D, attack tables, ray tables    [1.6+, NEW]
+//   - chess_spectral_4d.engine       — search core + 3 evaluators (mat/qm/spec) [1.6+, NEW]
+//   - chess_spectral.engine.tournament — round-robin self-play harness          [1.6+, NEW]
+//   - Discrete-Laplacian eigenbasis as 3rd legality oracle                      [1.6+, NEW]
+//   - chess_spectral.frame_v5        — v5 wire format w/ XOR-stream encoding    [1.6+, NEW]
+// See docs/bridge_api.md for the wire-up plan; chess4D-OC will surface
+// the engine + new oracles in M13.4 / M11.32 / M11.33.
 //
 // Protocol: { id, method, args } -> { id, ok, result } | { id, ok:false, error }
 // See ~/.claude/projects/D--GitHub-chess4D-OC/memory/api-contracts.md.
@@ -50,11 +56,15 @@ async function ensureInit() {
     const micropip = pyodide.pyimport('micropip');
 
     // keep_going=True so a failure on one package doesn't block the others.
-    // chess-spectral 1.5.0 (Apr 2026) adds the qm_4d / qm_4d_dynamics /
-    // qm_4d_bridge modules for §17.1 QM-extension surface and the §17.5
-    // dev/debug surface (get_version, get_encoder_shape, etc.).
+    // chess-spectral 1.6.1 (Apr 2026) adds the §16 ship-gate engine
+    // (search + tournament + 3 evaluators), bitboard4d move-gen via
+    // chess_spectral.spatial_4d, the third "discrete-Laplacian
+    // eigenbasis" legality oracle, and the v5 wire format with
+    // XOR-stream compression. M11.31 is the canary — just bump the
+    // pin and verify Pyodide can load 1.6.1 cleanly. The new surfaces
+    // get wired in M13.4 / M11.32 / M11.33 (see docs/bridge_api.md).
     await micropip.install(
-      ['chess-spectral>=1.5.0', 'python-chess4d-oana-chiru>=0.4.0'],
+      ['chess-spectral>=1.6.1', 'python-chess4d-oana-chiru>=0.4.0'],
       true /* keep_going */
     );
 
