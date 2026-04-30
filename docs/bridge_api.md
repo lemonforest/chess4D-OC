@@ -38,7 +38,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `hasLegalMoves(team)` *(M11.26)* | `0\|1` | `{ ok, hasMoves: boolean }` | (M11.26.1 cutover pending) | King-first scan in Python; drop-in for `gameBoard.hasLegalMoves` |
 | `getFen4State()` *(M11.26)* | — | `{ ok, fen4 }` | (M11.6 export refactor pending) | Best-effort v1 serializer; probes upstream + hand-rolled fallback |
 | `getQmState(opts?)` *(M11.27)* | `{ sideToMove?: bool }` | `{ ok, psi: Float32Array(90112), basisDim: 45056, normSq }` | (M14.x viz pending) | ψ as real+imag interleaved Float32; `psi[2k]=Re`, `psi[2k+1]=Im` |
-| `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | (M14.1 viz pending) | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
+| `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | `js/spectral_qm_density.js` (M14.1) ✅ | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
 | `applyMoveQm(origin, dest)` *(M11.28)* | `{x,y,z,w}` × 2 | `{ ok, psi: Float32Array(90112), basisDim, normSq }` | (M14.x preview overlays pending) | PREVIEW-style — returns ψ_post, doesn't mutate chess4d state |
 | `measureAt(coord, observable?)` *(M11.29)* | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, postCollapsePsi }` | (M14.4 click-to-measure pending) | Born-rule projective measurement; observable defaults to channel-PVM |
 | `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | (M14.3 entanglement viz pending) | tr(ρ²)=purity; rank>1 = entangled |
@@ -61,6 +61,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `js/spectral_isosurfaces.js` (M11.3.1) | `getBoardEncoding` |
 | `js/spectral_board_tint.js` (M11.3.6) | `getBoardEncoding` |
 | `js/spectral_dotplot.js` (M11.9) | `getBoardEncoding` |
+| `js/spectral_qm_density.js` (M14.1) | `getQmDensity` |
 | `GameBoard.js` `move()` | `applyMove` |
 | Debug status panel | `getStatus`, `getConstants`, `getInitialPositionInfo` |
 | `tests/parity-corpus.json` (M3.5) | `listInitialPieces`, `legalMovesAtInitial` |

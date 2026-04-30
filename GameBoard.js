@@ -108,6 +108,8 @@ GameBoard.prototype = {
 						if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.refresh();
 						// M11.9: dot-plot mode
 						if (window.SpectralDotplot) window.SpectralDotplot.refresh();
+						// M14.1: QM density |ψ|² tint
+						if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -123,7 +125,8 @@ GameBoard.prototype = {
 			// guard, overlays stay frozen at initial position.
 			if (window.SpectralBridge && (
 					window.SpectralHeatmap || window.SpectralFilaments ||
-					window.SpectralBoardTint || window.SpectralIsosurfaces || window.SpectralDotplot
+					window.SpectralBoardTint || window.SpectralIsosurfaces || window.SpectralDotplot ||
+					window.SpectralQmDensity
 				)) {
 				try {
 					window.SpectralBridge.applyMove(
@@ -136,6 +139,7 @@ GameBoard.prototype = {
 							if (window.SpectralBoardTint) window.SpectralBoardTint.refresh();
 							if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.refresh();
 							if (window.SpectralDotplot) window.SpectralDotplot.refresh();
+							if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
 						}
 					}).catch((err) => {
 						console.warn('[m10] bridge.applyMove error', err);
