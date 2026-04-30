@@ -67,7 +67,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | `js/spectral_qm_current.js` (M14.2) ✅ | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
 | `getQmExpectation(observable, weights?)` *(M11.29)* | `string, object?` | `{ ok, value }` | (M13.4 bot eval pending) | `⟨ψ\|H\|ψ⟩` for piece-reach observables; composable via weights |
 | `getBestMove(opts)` *(M13.4)* | `{ evaluator, maxDepth?, timeBudgetMs?, useTt?, useMvvLva?, useQuiescence? }` | `{ ok, move, evaluator, score, depth, elapsedMs, nodesSearched, ttHits, ttSize, pv }` | `js/Bot.js` `engine-*` strategies + `js/spectral_pv.js` (M14.5) ✅ | Iterative-deepening alpha-beta in Pyodide worker; PV consumed by ghost-arrow overlay |
-| `evaluatePosition(opts)` *(M13.4)* | `{ evaluator }` | `{ ok, evaluator, value, breakdown? }` | (M14.6 eval-bar overlay pending) | Static eval; `breakdown` per-piece (qm) or per-channel (spectral) |
+| `evaluatePosition(opts)` *(M13.4)* | `{ evaluator }` | `{ ok, evaluator, value, breakdown? }` | `js/spectral_eval_breakdown.js` (M14.6) ✅ | Static eval; `breakdown` per-piece (qm) or per-channel (spectral); rendered as DOM bars |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
@@ -88,6 +88,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `js/spectral_qm_density.js` (M14.1) | `getQmDensity` |
 | `js/spectral_qm_current.js` (M14.2) | `getProbabilityCurrent` |
 | `js/spectral_pv.js` (M14.5) | (consumes PV array from `getBestMove`) |
+| `js/spectral_eval_breakdown.js` (M14.6) | `evaluatePosition` |
 | `GameBoard.js` `move()` | `applyMove` |
 | Debug status panel | `getStatus`, `getConstants`, `getInitialPositionInfo` |
 | `tests/parity-corpus.json` (M3.5) | `listInitialPieces`, `legalMovesAtInitial` |
