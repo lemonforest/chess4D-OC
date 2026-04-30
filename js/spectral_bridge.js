@@ -284,6 +284,30 @@
     // M13.4 chess-spectral 1.6 will use this for QM-flavored bot eval.
     getQmExpectation: (observable, weights) =>
       applyChain.then(() => call('getQmExpectation', { observable, weights })),
+
+    // ───────────────────────────────────────────────────────────────
+    // chess-spectral 1.6.1 §16 engine surface (M13.4)
+    // ───────────────────────────────────────────────────────────────
+
+    // Run iterative-deepening alpha-beta search at the current state.
+    //   opts: { evaluator: 'material'|'qm'|'spectral', maxDepth?,
+    //           timeBudgetMs?, useTt?, useMvvLva?, useQuiescence? }
+    //   → { ok, move: {x0,y0,z0,w0,x1,y1,z1,w1}, evaluator, score,
+    //       depth, elapsedMs, nodesSearched, ttHits, ttSize,
+    //       pv: [{from:{x,y,z,w}, to:{x,y,z,w}}, ...] }
+    //
+    // Search runs in the worker, freeing the main thread. PV (principal
+    // variation) is the engine's predicted continuation — drives M14.5
+    // ghost-arrow overlay.
+    getBestMove: (opts) =>
+      applyChain.then(() => call('getBestMove', opts || {})),
+
+    // Static eval at the current state without searching. Returns:
+    //   { ok, evaluator, value, breakdown? }
+    // breakdown is the per-piece (qm) / per-channel (spectral) decomp;
+    // material returns scalar only. M14.6 eval-bar overlay rides this.
+    evaluatePosition: (opts) =>
+      applyChain.then(() => call('evaluatePosition', opts || {})),
   };
   window.SpectralBridge = bridge;
 
