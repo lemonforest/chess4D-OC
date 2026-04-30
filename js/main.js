@@ -1018,6 +1018,12 @@ function initializeGame() {
                         try { window.SpectralBoardTint.init(scene, gameBoard); }
                         catch (err) { console.warn('[m11.3.6/tint] init error:', err); }
                     }
+                    // M14.1 — QM density tint (|ψ|² per-cell from
+                    // bridge.getQmDensity). First user-visible QM viz layer.
+                    if (typeof window !== 'undefined' && window.SpectralQmDensity) {
+                        try { window.SpectralQmDensity.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m14.1/qm-density] init error:', err); }
+                    }
                     // M11.3.1 — nested isosurface shells (Mathematica-style).
                     if (typeof window !== 'undefined' && window.SpectralIsosurfaces) {
                         try { window.SpectralIsosurfaces.init(scene, gameBoard); }
