@@ -112,6 +112,11 @@ GameBoard.prototype = {
 						if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
 						// M14.2: QM probability current j(c)
 						if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
+						// M14.5: clear PV ghost-arrows — ply 0 just played, so
+						// the predicted line is now stale until the next bot search
+						if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
+							window.SpectralPV.clear();
+						}
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -143,6 +148,9 @@ GameBoard.prototype = {
 							if (window.SpectralDotplot) window.SpectralDotplot.refresh();
 							if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
 							if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
+							if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
+								window.SpectralPV.clear();
+							}
 						}
 					}).catch((err) => {
 						console.warn('[m10] bridge.applyMove error', err);

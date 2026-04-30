@@ -985,6 +985,14 @@ Bot._engineGetBestMove = async function (evaluator) {
             ' time=' + (res.elapsedMs != null ? res.elapsedMs.toFixed(0) : '?') + 'ms' +
             ' pvlen=' + ((res.pv && res.pv.length) || 0)
         );
+        // M14.5 — push the principal variation to the PV overlay so the
+        // user sees the engine's predicted line during the visual gate
+        // window (between search completion and move execution).
+        if (typeof window !== 'undefined' && window.SpectralPV &&
+            typeof window.SpectralPV.show === 'function' && res.pv) {
+            try { window.SpectralPV.show(res.pv, /*team*/ 0); }
+            catch (e) { /* PV overlay is non-critical; swallow */ }
+        }
         // Strategy contract from M13.2: return {x0..w1, score, isCapture}.
         // isCapture is informational; the engine doesn't tell us, so we
         // leave it false (downstream visual gate handles uniformly).

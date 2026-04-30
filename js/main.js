@@ -1030,6 +1030,12 @@ function initializeGame() {
                         try { window.SpectralQmCurrent.init(scene, gameBoard); }
                         catch (err) { console.warn('[m14.2/qm-current] init error:', err); }
                     }
+                    // M14.5 — engine PV ghost-arrow overlay. Consumes
+                    // SearchResult.pv returned by bridge.getBestMove (M13.4).
+                    if (typeof window !== 'undefined' && window.SpectralPV) {
+                        try { window.SpectralPV.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m14.5/pv] init error:', err); }
+                    }
                     // M11.3.1 — nested isosurface shells (Mathematica-style).
                     if (typeof window !== 'undefined' && window.SpectralIsosurfaces) {
                         try { window.SpectralIsosurfaces.init(scene, gameBoard); }
