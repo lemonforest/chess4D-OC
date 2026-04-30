@@ -26,8 +26,8 @@ Wire-up tracking (chess4D-OC milestones):
 | **M14.2** ✅ | viz: probability-current arrow glyphs (consumes `getProbabilityCurrent`) | merged |
 | **M11.31** | bump pin → 1.6.1 (canary) | merged |
 | **M13.4** | Bot.js → bridge.getBestMove + 3 new engine-* strategies (engine search runs in Pyodide; fixes JS-thread freeze) | this PR |
-| **M11.32** | `_legal_moves_bitboard` via `spatial_4d.Board4D` + `?legalityOps=bitboard` | this PR |
-| **M11.33** | discrete-Laplacian oracle as 3rd `?legalityOps` option | after M11.32 |
+| **M11.32** | `_legal_moves_bitboard` via `spatial_4d.Board4D` + `?legalityOps=bitboard` | merged |
+| **M11.33** | discrete-Laplacian oracle (`spectral_legality_4d.reachable_targets_4d`) + `?legalityOps=laplacian` | this PR |
 | **M14.3** | viz: density-matrix entanglement (consumes `getDensityMatrixOf`) | queued |
 | **M14.4** | viz: click-to-measure interaction (consumes `measureAt`) | queued |
 | **M14.5** (new) | viz: PV ghost-arrow overlay (consumes new `SearchResult.pv`) | queued |
@@ -50,7 +50,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `undo()` | — | `{ ok }` | `MoveManager.undo()` (currently unused) | Mutation; serialized |
 | `resetToInitial()` | — | `{ ok }` | New Game button | Mutation; serialized |
 | `legalMoves(origin)` | `{x,y,z,w}` | `{ ok, moves: [{x,y,z,w}, ...] }` | M3.5 parity harness only — **NOT YET on user-click path** | Awaits applyChain to ensure post-move state |
-| `setLegalityOps(ops)` | `'spatial' \| 'phase' \| 'bitboard'` | `{ ok }` | URL flag `?legalityOps=` | Three oracles (1.6.1+): chess4d.pieces / phase_operators_4d / spatial_4d.Board4D.legal_moves; all three head-to-head-validated by upstream |
+| `setLegalityOps(ops)` | `'spatial' \| 'phase' \| 'bitboard' \| 'laplacian'` | `{ ok }` | URL flag `?legalityOps=` | Four oracles (chess4d baseline + 1.6.1's three lenses): chess4d.pieces / phase_operators_4d / spatial_4d.Board4D.legal_moves / spectral_legality_4d.reachable_targets_4d. All return the same legal-move set; pawns under `laplacian` defer to spatial (oracle doesn't model pawn rules). |
 | `previewEncoding(origin)` | `{x,y,z,w}` | `{ ok, previews: [{dest, intensities}] }` | `spectral_overlay.js` (M5 hover) | Coalesced — one in-flight + one queued, replace on new hover |
 | `getBoardEncoding(channels)` | `string[]` | `{ ok, channels: { name: Float32Array(4096) } }` | All five spectral overlay modules | Refreshes only when move history advances (cached) |
 | `listInitialPieces()` | — | `{ pieces: [...] }` | M3.5 parity harness | Read-only |
