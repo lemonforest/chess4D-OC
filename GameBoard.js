@@ -117,6 +117,10 @@ GameBoard.prototype = {
 						if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
 							window.SpectralPV.clear();
 						}
+						// M14.6: refresh eval-breakdown bars at the new position
+						if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
+							window.SpectralEvalBreakdown.refresh();
+						}
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -150,6 +154,9 @@ GameBoard.prototype = {
 							if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
 							if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
 								window.SpectralPV.clear();
+							}
+							if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
+								window.SpectralEvalBreakdown.refresh();
 							}
 						}
 					}).catch((err) => {

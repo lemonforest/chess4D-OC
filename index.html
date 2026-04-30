@@ -74,6 +74,7 @@
         'js/spectral_qm_density.js',
         'js/spectral_qm_current.js',
         'js/spectral_pv.js',
+        'js/spectral_eval_breakdown.js',
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
         'js/phase_ops_4d.js',
@@ -652,6 +653,30 @@
                         <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
                             Page may briefly freeze during smart-bot deep search. Yield-points keep the spinner moving and let the page repaint between depth iterations, but a single deep iteration still blocks the JS thread.
                         </p>
+                    </div>
+                    <!-- M14.6: eval-breakdown debug panel. Calls
+                         bridge.evaluatePosition({evaluator}) each move and
+                         renders per-component contribution bars. Most useful
+                         alongside an engine-* bot strategy so the bars track
+                         the eval that just drove the bot's pick. -->
+                    <div class="spectral-control" style="flex-direction: column; align-items: stretch; margin-top: 6px;">
+                        <label title="Show the per-component breakdown of the engine's static evaluation at the current position. qm = per-piece-name observable expectations; spectral = per-channel energy contributions; material = scalar only (no breakdown). Useful for understanding *why* the engine likes/dislikes the position.">
+                            <input type="checkbox" id="eval-breakdown-toggle">
+                            Show eval breakdown
+                        </label>
+                        <div class="spectral-control" style="margin-top: 4px;">
+                            <label for="eval-breakdown-evaluator" style="margin: 0;">Evaluator:</label>
+                            <select id="eval-breakdown-evaluator" aria-label="Evaluator for breakdown panel"
+                                    title="Pick which evaluator's breakdown to display. spectral = per-channel; qm = per-piece observable; material = scalar (no breakdown).">
+                                <option value="spectral">spectral (per-channel)</option>
+                                <option value="qm">qm (per-piece observable)</option>
+                                <option value="material">material (scalar)</option>
+                            </select>
+                        </div>
+                        <div id="eval-breakdown-panel" style="display: none; margin-top: 6px; background: #0f0f0f; padding: 6px; border-radius: 3px; border: 1px solid #2a2a2a;">
+                            <div id="eval-breakdown-status" style="font-size: 0.78em; font-family: monospace; color: #aaa; margin-bottom: 4px;">(refresh pending)</div>
+                            <div id="eval-breakdown-bars"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1836,6 +1861,63 @@
           apply();
           try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
         });
+      });
+    </script>
+
+    <!-- M14.6: eval-breakdown debug panel toggle + evaluator dropdown.
+         URL flags ?evalBreakdown=1, ?evalBreakdownEvaluator=spectral|qm|material.
+         Persisted via localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        if (!window.SpectralEvalBreakdown) return;
+        window.SpectralEvalBreakdown.init();
+
+        var box = document.getElementById('eval-breakdown-toggle');
+        var sel = document.getElementById('eval-breakdown-evaluator');
+        var KEY_ON  = 'chess4d-oc.eval-breakdown.enabled';
+        var KEY_EV  = 'chess4d-oc.eval-breakdown.evaluator';
+
+        if (box) {
+          var initial = null;
+          try {
+            var u = new URLSearchParams(location.search).get('evalBreakdown');
+            if (u === '1' || u === 'on') initial = true;
+            if (initial === null) {
+              var v = localStorage.getItem(KEY_ON);
+              if (v === '1') initial = true; else if (v === '0') initial = false;
+            }
+          } catch (_) {}
+          if (initial !== null) box.checked = initial;
+          function applyBox() {
+            window.SpectralEvalBreakdown.setEnabled(box.checked);
+          }
+          applyBox();
+          box.addEventListener('change', function () {
+            applyBox();
+            try { localStorage.setItem(KEY_ON, box.checked ? '1' : '0'); } catch (_) {}
+          });
+        }
+
+        if (sel) {
+          var initialEv = null;
+          try {
+            var ue = new URLSearchParams(location.search).get('evalBreakdownEvaluator');
+            if (['material','qm','spectral'].includes(ue)) initialEv = ue;
+            if (initialEv === null) {
+              var ve = localStorage.getItem(KEY_EV);
+              if (['material','qm','spectral'].includes(ve)) initialEv = ve;
+            }
+          } catch (_) {}
+          if (initialEv) sel.value = initialEv;
+          function applySel() {
+            window.SpectralEvalBreakdown.setEvaluator(sel.value);
+          }
+          applySel();
+          sel.addEventListener('change', function () {
+            applySel();
+            try { localStorage.setItem(KEY_EV, sel.value); } catch (_) {}
+          });
+        }
       });
     </script>
 
