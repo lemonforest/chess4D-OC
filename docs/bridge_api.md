@@ -24,8 +24,8 @@ Wire-up tracking (chess4D-OC milestones):
 | **M11.29** ✅ | QM dynamics: `measureAt`, `getDensityMatrixOf`, `getProbabilityCurrent`, `getQmExpectation` | merged |
 | **M14.1** ✅ | viz: `\|ψ\|²` density tint (consumes `getQmDensity`) | merged |
 | **M14.2** ✅ | viz: probability-current arrow glyphs (consumes `getProbabilityCurrent`) | merged |
-| **M11.31** | bump pin → 1.6.1 (canary) | this PR |
-| **M13.4** | Bot.js → bridge.getBestMove (engine search runs in Pyodide; fixes JS-thread freeze) | next |
+| **M11.31** | bump pin → 1.6.1 (canary) | merged |
+| **M13.4** | Bot.js → bridge.getBestMove + 3 new engine-* strategies (engine search runs in Pyodide; fixes JS-thread freeze) | this PR |
 | **M11.32** | `_legal_moves_bitboard` via `spatial_4d` + `?legalityOps=bitboard` | after M13.4 |
 | **M11.33** | discrete-Laplacian oracle as 3rd `?legalityOps` option | after M11.32 |
 | **M14.3** | viz: density-matrix entanglement (consumes `getDensityMatrixOf`) | queued |
@@ -66,6 +66,8 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | (M14.3 entanglement viz pending) | tr(ρ²)=purity; rank>1 = entangled |
 | `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | `js/spectral_qm_current.js` (M14.2) ✅ | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
 | `getQmExpectation(observable, weights?)` *(M11.29)* | `string, object?` | `{ ok, value }` | (M13.4 bot eval pending) | `⟨ψ\|H\|ψ⟩` for piece-reach observables; composable via weights |
+| `getBestMove(opts)` *(M13.4)* | `{ evaluator, maxDepth?, timeBudgetMs?, useTt?, useMvvLva?, useQuiescence? }` | `{ ok, move, evaluator, score, depth, elapsedMs, nodesSearched, ttHits, ttSize, pv }` | `js/Bot.js` `engine-*` strategies | Iterative-deepening alpha-beta in Pyodide worker; PV is the predicted line |
+| `evaluatePosition(opts)` *(M13.4)* | `{ evaluator }` | `{ ok, evaluator, value, breakdown? }` | (M14.6 eval-bar overlay pending) | Static eval; `breakdown` per-piece (qm) or per-channel (spectral) |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
 
@@ -99,8 +101,8 @@ The §16 ship-gate release delivered every engine method we asked for, plus the 
 
 | Bridge method | Upstream symbol | Wire-up | Notes |
 |---|---|---|---|
-| `getBestMove(opts)` | `chess_spectral_4d.engine.search.search(board, evaluator, options)` | M13.4 | `evaluator` is one of `chess_spectral_4d.engine.eval.{material, qm, spectral}.evaluate`; `options` is `SearchOptions(max_depth, time_budget_ms, use_tt, use_mvv_lva, use_quiescence, quiescence_max_depth)` |
-| `evaluatePosition(opts)` | `chess_spectral_4d.engine.eval.{type}.evaluate(position, side_to_move, weights?)` | M13.4 | Sync, single eval call. `evaluate_breakdown` returns per-piece/channel decomposition. |
+| `getBestMove(opts)` | `chess_spectral_4d.engine.search.search(board, evaluator, options)` | **Wired in M13.4** ✅ | `evaluator` is one of `chess_spectral_4d.engine.eval.{material, qm, spectral}.evaluate`; `options` is `SearchOptions(max_depth, time_budget_ms, use_tt, use_mvv_lva, use_quiescence, quiescence_max_depth)`. State translation: chess4d.GameState → FEN4 → `Board4D.from_fen(fen4)`. |
+| `evaluatePosition(opts)` | `chess_spectral_4d.engine.eval.{type}.evaluate(position, side_to_move, weights?)` | **Wired in M13.4** ✅ | Static eval at current state. Returns `{ok, evaluator, value, breakdown?}`. breakdown is per-piece (qm) or per-channel (spectral); material is scalar only. |
 | `runTournament(opts)` | `chess_spectral.engine.tournament.run_round_robin(agents, n_games, max_plies)` | M13.5 (later) | Returns Elo + per-game records. Long-running; not for browser UI. |
 | **bonus**: principal variation | `SearchResult.pv: List[Move4D]` | M14.5 | Bot's predicted line. Drives the "ghost arrow" preview overlay. |
 | **bonus**: eval breakdown | `evaluate_breakdown(pos, side_to_move, weights?) → Dict[str, float]` | M14.6 | Per-piece (qm) or per-channel (spectral) decomposition. Drives the eval-bar debug overlay. |

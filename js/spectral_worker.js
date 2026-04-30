@@ -1161,6 +1161,190 @@ _do_get_qm_expectation()
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.6.1 §16 engine surface (M13.4)
+  // ───────────────────────────────────────────────────────────────────
+
+  // Run the §16.2 iterative-deepening alpha-beta search at the current
+  // position and return the best move plus search metadata.
+  //
+  // Args (all optional):
+  //   { evaluator: 'material'|'qm'|'spectral'  // default 'material'
+  //     maxDepth: int                           // default 3
+  //     timeBudgetMs: number                    // default 4000
+  //     useTt: bool, useMvvLva: bool, useQuiescence: bool   // default true }
+  //
+  // Returns:
+  //   { ok: true, move: {x0,y0,z0,w0,x1,y1,z1,w1}, evaluator, score,
+  //     depth, elapsedMs, nodesSearched, ttHits, ttSize,
+  //     pv: [{from: {x,y,z,w}, to: {x,y,z,w}}, ...] }
+  //
+  // The bot's search runs INSIDE the worker — the main thread stays
+  // responsive throughout. Replaces the JS-side iterative deepening
+  // (`Bot.getBestMoveSmart` in Bot.js) for the new engine-* strategies.
+  //
+  // State translation: chess4d.GameState -> FEN4 -> chess_spectral.
+  // spatial_4d.Board4D via `Board4D.from_fen(fen4)`. The Board4D class
+  // is the engine-ready board (legal_moves(), push/pop, position_hash);
+  // chess_spectral_4d.GameState4D is a separate lighter wrapper.
+  getBestMove(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const evaluator    = (args && args.evaluator) || 'material';
+    const maxDepth     = (args && Number.isFinite(args.maxDepth)) ? args.maxDepth : 3;
+    const timeBudgetMs = (args && Number.isFinite(args.timeBudgetMs)) ? args.timeBudgetMs : 4000;
+    const useTt        = (args && args.useTt !== undefined) ? !!args.useTt : true;
+    const useMvvLva    = (args && args.useMvvLva !== undefined) ? !!args.useMvvLva : true;
+    const useQuies     = (args && args.useQuiescence !== undefined) ? !!args.useQuiescence : true;
+    pyodide.globals.set('_bm_evaluator', evaluator);
+    pyodide.globals.set('_bm_max_depth', maxDepth | 0);
+    pyodide.globals.set('_bm_time_budget_ms', timeBudgetMs);
+    pyodide.globals.set('_bm_use_tt', useTt);
+    pyodide.globals.set('_bm_use_mvv_lva', useMvvLva);
+    pyodide.globals.set('_bm_use_quies', useQuies);
+    return pyodide
+      .runPython(
+        `
+def _do_get_best_move():
+    try:
+        from chess_spectral.spatial_4d import Board4D
+        from chess_spectral_4d.engine.search import search, SearchOptions
+        from chess_spectral_4d.engine.eval import material as _ev_mat
+        from chess_spectral_4d.engine.eval import qm as _ev_qm
+        from chess_spectral_4d.engine.eval import spectral as _ev_sp
+    except Exception as e:
+        return {'ok': False, 'error': f'engine import failed: {type(e).__name__}: {e}'}
+
+    eval_map = {
+        'material': _ev_mat.evaluate,
+        'qm':       _ev_qm.evaluate,
+        'spectral': _ev_sp.evaluate,
+    }
+    eval_name = str(_bm_evaluator) if _bm_evaluator else 'material'
+    eval_fn = eval_map.get(eval_name)
+    if eval_fn is None:
+        return {'ok': False, 'error': f'unknown evaluator: {eval_name!r}'}
+
+    try:
+        fen4 = _state_to_fen4(_state)
+        board = Board4D.from_fen(fen4)
+    except Exception as e:
+        return {'ok': False, 'error': f'state translation failed: {type(e).__name__}: {e}'}
+
+    try:
+        options = SearchOptions(
+            max_depth=int(_bm_max_depth),
+            time_budget_ms=float(_bm_time_budget_ms),
+            use_tt=bool(_bm_use_tt),
+            use_mvv_lva=bool(_bm_use_mvv_lva),
+            use_quiescence=bool(_bm_use_quies),
+        )
+    except Exception as e:
+        return {'ok': False, 'error': f'options build failed: {type(e).__name__}: {e}'}
+
+    try:
+        result = search(board, eval_fn, options)
+    except Exception as e:
+        return {'ok': False, 'error': f'search failed: {type(e).__name__}: {e}'}
+
+    if result.best_move is None:
+        return {'ok': False, 'error': 'no legal moves'}
+
+    def _sq_to_coord(sq):
+        sq = int(sq)
+        return ((sq >> 9) & 7, (sq >> 6) & 7, (sq >> 3) & 7, sq & 7)
+
+    fc = _sq_to_coord(result.best_move.from_sq)
+    tc = _sq_to_coord(result.best_move.to_sq)
+    pv_list = []
+    for m in (result.pv or []):
+        pf = _sq_to_coord(m.from_sq)
+        pt = _sq_to_coord(m.to_sq)
+        pv_list.append({
+            'from': {'x': pf[0], 'y': pf[1], 'z': pf[2], 'w': pf[3]},
+            'to':   {'x': pt[0], 'y': pt[1], 'z': pt[2], 'w': pt[3]},
+        })
+
+    return {
+        'ok': True,
+        'move': {
+            'x0': fc[0], 'y0': fc[1], 'z0': fc[2], 'w0': fc[3],
+            'x1': tc[0], 'y1': tc[1], 'z1': tc[2], 'w1': tc[3],
+        },
+        'evaluator': eval_name,
+        'score': float(result.best_score) if result.best_score is not None else 0.0,
+        'depth': int(result.depth_reached),
+        'elapsedMs': float(result.elapsed_ms),
+        'nodesSearched': int(result.nodes_searched),
+        'ttHits': int(getattr(result, 'tt_hits', 0)),
+        'ttSize': int(getattr(result, 'tt_size', 0)),
+        'pv': pv_list,
+    }
+_do_get_best_move()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 6 });
+  },
+
+  // Static eval (no search) at the current position. Returns:
+  //   { ok, evaluator, value, breakdown? }
+  // breakdown is the per-piece (qm) or per-channel (spectral) decomp
+  // when the evaluator supports it; material returns scalar only.
+  evaluatePosition(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const evaluator = (args && args.evaluator) || 'material';
+    pyodide.globals.set('_ep_evaluator', evaluator);
+    return pyodide
+      .runPython(
+        `
+def _do_evaluate_position():
+    try:
+        from chess_spectral.spatial_4d import Board4D
+        from chess_spectral_4d.engine.eval import material as _ev_mat
+        from chess_spectral_4d.engine.eval import qm as _ev_qm
+        from chess_spectral_4d.engine.eval import spectral as _ev_sp
+    except Exception as e:
+        return {'ok': False, 'error': f'engine import failed: {type(e).__name__}: {e}'}
+    eval_name = str(_ep_evaluator) if _ep_evaluator else 'material'
+    try:
+        fen4 = _state_to_fen4(_state)
+        board = Board4D.from_fen(fen4)
+        # The evaluators take Position4D (board.to_position_dict()) +
+        # side_to_move bool. Fall back to board.turn == 'w' for the
+        # color flag.
+        position_dict = board.to_position_dict()
+        side_to_move = (board.turn == 'w')
+    except Exception as e:
+        return {'ok': False, 'error': f'state translation failed: {type(e).__name__}: {e}'}
+    try:
+        if eval_name == 'material':
+            v = _ev_mat.evaluate(position_dict, side_to_move)
+            return {'ok': True, 'evaluator': 'material', 'value': float(v)}
+        elif eval_name == 'qm':
+            v = _ev_qm.evaluate(position_dict, side_to_move)
+            try:
+                bd = _ev_qm.evaluate_breakdown(position_dict, side_to_move)
+                return {'ok': True, 'evaluator': 'qm', 'value': float(v),
+                        'breakdown': {k: float(val) for k, val in bd.items()}}
+            except Exception:
+                return {'ok': True, 'evaluator': 'qm', 'value': float(v)}
+        elif eval_name == 'spectral':
+            v = _ev_sp.evaluate(position_dict, side_to_move)
+            try:
+                bd = _ev_sp.evaluate_breakdown(position_dict, side_to_move)
+                return {'ok': True, 'evaluator': 'spectral', 'value': float(v),
+                        'breakdown': {k: float(val) for k, val in bd.items()}}
+            except Exception:
+                return {'ok': True, 'evaluator': 'spectral', 'value': float(v)}
+        else:
+            return {'ok': False, 'error': f'unknown evaluator: {eval_name!r}'}
+    except Exception as e:
+        return {'ok': False, 'error': f'evaluate failed: {type(e).__name__}: {e}'}
+_do_evaluate_position()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 6 });
+  },
 };
 
 self.onmessage = async (event) => {

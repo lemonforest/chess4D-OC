@@ -930,6 +930,74 @@ Bot.strategies = {
             return Bot._weightedHeuristicMove(gb, team, { capture: 1, safety: 1, center: 5 });
         },
     },
+    // M13.4 — chess-spectral 1.6.1 §16 engine strategies. Iterative-
+    // deepening alpha-beta with TT + MVV-LVA + quiescence runs entirely
+    // in the Pyodide worker; the JS main thread stays responsive
+    // throughout the search. Three evaluator flavors:
+    //   - engine-material : classical material count
+    //   - engine-spectral : channel-energy weighted sum
+    //   - engine-qm       : Born-rule observable expectations
+    //
+    // Returns null on bridge unavailability (e.g., page loaded with
+    // bridge boot pending) so Bot.makeMove falls back gracefully.
+    'engine-material': {
+        label: 'Engine — material eval (cs1.6 alpha-beta)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('material'); },
+    },
+    'engine-spectral': {
+        label: 'Engine — spectral eval (channel energy)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('spectral'); },
+    },
+    'engine-qm': {
+        label: 'Engine — QM eval (Born-rule observables)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('qm'); },
+    },
+};
+
+// M13.4 — shared engine search helper. Async (returns Promise<move|null>);
+// strategy.getBestMove call sites already `await` so the existing async
+// path through Bot.makeMove (set up in M11.28a) handles this naturally.
+//
+// Search depth + time budget come from the existing TIMING constants;
+// future work (M13.4.1) can expose per-strategy slider tuning.
+Bot._engineGetBestMove = async function (evaluator) {
+    if (typeof window === 'undefined' || !window.SpectralBridge ||
+        typeof window.SpectralBridge.getBestMove !== 'function') {
+        console.warn('[m13.4/engine] bridge.getBestMove unavailable; falling back to null');
+        return null;
+    }
+    try {
+        const res = await window.SpectralBridge.getBestMove({
+            evaluator: evaluator,
+            maxDepth: 3,
+            timeBudgetMs: 4000,
+        });
+        if (!res || !res.ok || !res.move) {
+            console.warn('[m13.4/engine] getBestMove failed:', res && res.error);
+            return null;
+        }
+        const m = res.move;
+        console.log(
+            '[m13.4/engine] eval=' + (res.evaluator || evaluator) +
+            ' depth=' + res.depth + ' nodes=' + res.nodesSearched +
+            ' tt=' + res.ttHits + '/' + res.ttSize +
+            ' score=' + (res.score != null ? res.score.toFixed(3) : '?') +
+            ' time=' + (res.elapsedMs != null ? res.elapsedMs.toFixed(0) : '?') + 'ms' +
+            ' pvlen=' + ((res.pv && res.pv.length) || 0)
+        );
+        // Strategy contract from M13.2: return {x0..w1, score, isCapture}.
+        // isCapture is informational; the engine doesn't tell us, so we
+        // leave it false (downstream visual gate handles uniformly).
+        return {
+            x0: m.x0, y0: m.y0, z0: m.z0, w0: m.w0,
+            x1: m.x1, y1: m.y1, z1: m.z1, w1: m.w1,
+            score: res.score,
+            isCapture: false,
+        };
+    } catch (err) {
+        console.warn('[m13.4/engine] bridge call threw:', err);
+        return null;
+    }
 };
 
 // Per-side active strategy. Default both to v0 (existing behavior).
