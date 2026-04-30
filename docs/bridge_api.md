@@ -62,8 +62,8 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `getQmState(opts?)` *(M11.27)* | `{ sideToMove?: bool }` | `{ ok, psi: Float32Array(90112), basisDim: 45056, normSq }` | (M14.x viz pending) | ψ as real+imag interleaved Float32; `psi[2k]=Re`, `psi[2k+1]=Im` |
 | `getQmDensity()` *(M11.27)* | — | `{ ok, density: Float32Array(4096) }` | `js/spectral_qm_density.js` (M14.1) ✅ | Per-cell `\|ψ\|²` summed over channels; sums to 1.0±1e-6 |
 | `applyMoveQm(origin, dest)` *(M11.28)* | `{x,y,z,w}` × 2 | `{ ok, psi: Float32Array(90112), basisDim, normSq }` | (M14.x preview overlays pending) | PREVIEW-style — returns ψ_post, doesn't mutate chess4d state |
-| `measureAt(coord, observable?)` *(M11.29)* | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, postCollapsePsi }` | (M14.4 click-to-measure pending) | Born-rule projective measurement; observable defaults to channel-PVM |
-| `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | (M14.3 entanglement viz pending) | tr(ρ²)=purity; rank>1 = entangled |
+| `measureAt(coord, observable?)` *(M11.29)* | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, probability, postCollapsePsi }` | `js/spectral_measure_panel.js` (M14.4) ✅ | Born-rule projective measurement; observable defaults to position-projection PVM |
+| `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | **BLOCKED on chess-spectral 1.7+** ⚠️ | Stubbed upstream — `NotImplementedError` deferred pending channel-to-piece attribution map decision (FIB_SYM / FD_DIAG / FA_PAWN are 1:N due to encoder bilinearity). M14.3 entanglement viz waits on this. |
 | `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | `js/spectral_qm_current.js` (M14.2) ✅ | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
 | `getQmExpectation(observable, weights?)` *(M11.29)* | `string, object?` | `{ ok, value }` | (M13.4 bot eval pending) | `⟨ψ\|H\|ψ⟩` for piece-reach observables; composable via weights |
 | `getBestMove(opts)` *(M13.4)* | `{ evaluator, maxDepth?, timeBudgetMs?, useTt?, useMvvLva?, useQuiescence? }` | `{ ok, move, evaluator, score, depth, elapsedMs, nodesSearched, ttHits, ttSize, pv }` | `js/Bot.js` `engine-*` strategies + `js/spectral_pv.js` (M14.5) ✅ | Iterative-deepening alpha-beta in Pyodide worker; PV consumed by ghost-arrow overlay |
@@ -89,6 +89,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `js/spectral_qm_current.js` (M14.2) | `getProbabilityCurrent` |
 | `js/spectral_pv.js` (M14.5) | (consumes PV array from `getBestMove`) |
 | `js/spectral_eval_breakdown.js` (M14.6) | `evaluatePosition` |
+| `js/spectral_measure_panel.js` (M14.4) | `measureAt` |
 | `GameBoard.js` `move()` | `applyMove` |
 | Debug status panel | `getStatus`, `getConstants`, `getInitialPositionInfo` |
 | `tests/parity-corpus.json` (M3.5) | `listInitialPieces`, `legalMovesAtInitial` |
