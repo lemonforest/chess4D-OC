@@ -1024,6 +1024,12 @@ function initializeGame() {
                         try { window.SpectralQmDensity.init(scene, gameBoard); }
                         catch (err) { console.warn('[m14.1/qm-density] init error:', err); }
                     }
+                    // M14.2 — QM probability current j(c). Per-cell vector
+                    // glyphs from bridge.getProbabilityCurrent.
+                    if (typeof window !== 'undefined' && window.SpectralQmCurrent) {
+                        try { window.SpectralQmCurrent.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m14.2/qm-current] init error:', err); }
+                    }
                     // M11.3.1 — nested isosurface shells (Mathematica-style).
                     if (typeof window !== 'undefined' && window.SpectralIsosurfaces) {
                         try { window.SpectralIsosurfaces.init(scene, gameBoard); }

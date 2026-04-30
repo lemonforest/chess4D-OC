@@ -42,7 +42,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `applyMoveQm(origin, dest)` *(M11.28)* | `{x,y,z,w}` × 2 | `{ ok, psi: Float32Array(90112), basisDim, normSq }` | (M14.x preview overlays pending) | PREVIEW-style — returns ψ_post, doesn't mutate chess4d state |
 | `measureAt(coord, observable?)` *(M11.29)* | `{x,y,z,w}, string?` | `{ ok, sampledOutcome, postCollapsePsi }` | (M14.4 click-to-measure pending) | Born-rule projective measurement; observable defaults to channel-PVM |
 | `getDensityMatrixOf(pieceId)` *(M11.29)* | `int` | `{ ok, rho, purity, rank }` | (M14.3 entanglement viz pending) | tr(ρ²)=purity; rank>1 = entangled |
-| `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | (M14.2 filaments pending) | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
+| `getProbabilityCurrent()` *(M11.29)* | — | `{ ok, j: Float32Array }` | `js/spectral_qm_current.js` (M14.2) ✅ | `j_p(c) = Im(ψ* ∇ψ)`; per-cell 4D flow vector |
 | `getQmExpectation(observable, weights?)` *(M11.29)* | `string, object?` | `{ ok, value }` | (M13.4 bot eval pending) | `⟨ψ\|H\|ψ⟩` for piece-reach observables; composable via weights |
 
 ## Worker-side handlers (matched 1:1 with bridge methods above)
@@ -62,6 +62,7 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 | `js/spectral_board_tint.js` (M11.3.6) | `getBoardEncoding` |
 | `js/spectral_dotplot.js` (M11.9) | `getBoardEncoding` |
 | `js/spectral_qm_density.js` (M14.1) | `getQmDensity` |
+| `js/spectral_qm_current.js` (M14.2) | `getProbabilityCurrent` |
 | `GameBoard.js` `move()` | `applyMove` |
 | Debug status panel | `getStatus`, `getConstants`, `getInitialPositionInfo` |
 | `tests/parity-corpus.json` (M3.5) | `listInitialPieces`, `legalMovesAtInitial` |
