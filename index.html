@@ -72,6 +72,7 @@
         'js/spectral_heatmap.js',
         'js/spectral_board_tint.js',
         'js/spectral_qm_density.js',
+        'js/spectral_qm_current.js',
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
         'js/phase_ops_4d.js',
@@ -363,6 +364,16 @@
                     <label title="Tint each cell by the per-cell quantum density |ψ|² (Born-rule probability mass). Sources from chess-spectral 1.5's get_qm_density. NOTE: avoid enabling simultaneously with 'Tint board cells by channel' — both render at the same elevation and z-fight; toggle one at a time.">
                         <input type="checkbox" id="qm-density-tint">
                         Tint by QM density |ψ|²
+                    </label>
+                </div>
+                <!-- M14.2: probability current j_p(c) = Im(ψ* ∇ψ) per-cell vector field.
+                     Rendered as small arrows at each cell pointing in the (x,y,z)-projection
+                     of the local 4D flow; w-component encoded as color (RdBu, blue = -w
+                     flow, red = +w flow). Top 75% by magnitude shown by default. -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Per-cell quantum probability-current vector field j_p(c) = Im(ψ* ∇ψ). Each visible cell shows an arrow in the (x,y,z)-projection of its local 4D flow. Arrow color encodes the w-component (blue = -w flow, red = +w flow). Top 75% by magnitude shown to keep the viz uncluttered.">
+                        <input type="checkbox" id="qm-current">
+                        Probability current j(c)
                     </label>
                 </div>
                 <!-- M11.3.1: nested isosurface shells (Mathematica-style).
@@ -1763,6 +1774,33 @@
       });
     </script>
 
+    <!-- M14.2: QM probability current checkbox. URL flag ?qmCurrent=1 + localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('qm-current');
+        if (!box) return;
+        var KEY = 'chess4d-oc.qm-current';
+        var initial = null;
+        try {
+          var u = new URLSearchParams(location.search).get('qmCurrent');
+          if (u === '1' || u === 'on') initial = true;
+          if (initial === null) {
+            var v = localStorage.getItem(KEY);
+            if (v === '1') initial = true; else if (v === '0') initial = false;
+          }
+        } catch (_) {}
+        if (initial !== null) box.checked = initial;
+        function apply() {
+          if (window.SpectralQmCurrent) window.SpectralQmCurrent.setEnabled(box.checked);
+        }
+        apply();
+        box.addEventListener('change', function () {
+          apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
     <!-- M13.2: bot-strategy dropdowns. Read available strategies from
          Bot.strategies (registered in Bot.js), populate the two <select>
          elements, sync to Bot.activeStrategy on change, persist via
@@ -2291,6 +2329,9 @@
           }
           if (window.SpectralQmDensity && typeof window.SpectralQmDensity.setStackScale === 'function') {
             window.SpectralQmDensity.setStackScale(s);
+          }
+          if (window.SpectralQmCurrent && typeof window.SpectralQmCurrent.setStackScale === 'function') {
+            window.SpectralQmCurrent.setStackScale(s);
           }
           window.__GAME_DIRTY__ = true;
         }

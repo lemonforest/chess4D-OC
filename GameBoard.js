@@ -110,6 +110,8 @@ GameBoard.prototype = {
 						if (window.SpectralDotplot) window.SpectralDotplot.refresh();
 						// M14.1: QM density |ψ|² tint
 						if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
+						// M14.2: QM probability current j(c)
+						if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -126,7 +128,7 @@ GameBoard.prototype = {
 			if (window.SpectralBridge && (
 					window.SpectralHeatmap || window.SpectralFilaments ||
 					window.SpectralBoardTint || window.SpectralIsosurfaces || window.SpectralDotplot ||
-					window.SpectralQmDensity
+					window.SpectralQmDensity || window.SpectralQmCurrent
 				)) {
 				try {
 					window.SpectralBridge.applyMove(
@@ -140,6 +142,7 @@ GameBoard.prototype = {
 							if (window.SpectralIsosurfaces) window.SpectralIsosurfaces.refresh();
 							if (window.SpectralDotplot) window.SpectralDotplot.refresh();
 							if (window.SpectralQmDensity) window.SpectralQmDensity.refresh();
+							if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
 						}
 					}).catch((err) => {
 						console.warn('[m10] bridge.applyMove error', err);
