@@ -73,6 +73,7 @@
         'js/spectral_board_tint.js',
         'js/spectral_qm_density.js',
         'js/spectral_qm_current.js',
+        'js/spectral_pv.js',
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
         'js/phase_ops_4d.js',
@@ -374,6 +375,16 @@
                     <label title="Per-cell quantum probability-current vector field j_p(c) = Im(ψ* ∇ψ). Each visible cell shows an arrow in the (x,y,z)-projection of its local 4D flow. Arrow color encodes the w-component (blue = -w flow, red = +w flow). Top 75% by magnitude shown to keep the viz uncluttered.">
                         <input type="checkbox" id="qm-current">
                         Probability current j(c)
+                    </label>
+                </div>
+                <!-- M14.5: principal-variation ghost-arrow overlay. Engine bot
+                     (engine-* strategies, M13.4) returns SearchResult.pv —
+                     the predicted line of play. Each ply rendered as a colored
+                     arrow ply 0 = bright yellow → ply N = cool blue. -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Show the engine bot's predicted line of play (principal variation) as ghost arrows on the board. Ply 0 = bright yellow (the move about to be played), darkening through orange/red/purple/blue for each subsequent predicted ply. Cleared automatically when a move is played. Only meaningful when an engine-* bot strategy is in use.">
+                        <input type="checkbox" id="pv-overlay">
+                        Engine PV (predicted line)
                     </label>
                 </div>
                 <!-- M11.3.1: nested isosurface shells (Mathematica-style).
@@ -1792,6 +1803,33 @@
         if (initial !== null) box.checked = initial;
         function apply() {
           if (window.SpectralQmCurrent) window.SpectralQmCurrent.setEnabled(box.checked);
+        }
+        apply();
+        box.addEventListener('change', function () {
+          apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
+    <!-- M14.5: PV overlay checkbox. URL flag ?pv=1 + localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('pv-overlay');
+        if (!box) return;
+        var KEY = 'chess4d-oc.pv-overlay';
+        var initial = null;
+        try {
+          var u = new URLSearchParams(location.search).get('pv');
+          if (u === '1' || u === 'on') initial = true;
+          if (initial === null) {
+            var v = localStorage.getItem(KEY);
+            if (v === '1') initial = true; else if (v === '0') initial = false;
+          }
+        } catch (_) {}
+        if (initial !== null) box.checked = initial;
+        function apply() {
+          if (window.SpectralPV) window.SpectralPV.setEnabled(box.checked);
         }
         apply();
         box.addEventListener('change', function () {
