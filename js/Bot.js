@@ -306,7 +306,17 @@ const Bot = {
             console.error('Bot: gameBoard or moveManager not available');
             return Promise.resolve(false);
         }
-        
+
+        // M13.4.3 — capture the cancel-generation at entry so we can
+        // detect mid-flight cancellation (e.g., user clicked Two
+        // Players while the engine was searching). Bot.cancelInFlight()
+        // increments the generation; every await boundary below checks
+        // and bails before doing irreversible work (selecting a piece,
+        // applying a move). Pyodide-side searches still complete on
+        // their own time — we just discard their result.
+        const myCancelGen = Bot._cancelGen;
+        const wasCancelled = () => Bot._cancelGen !== myCancelGen;
+
         // CRITICAL: Check if team is in checkmate/stalemate before attempting to move.
         // M11.17: hasLegalMoves can take hundreds of ms in real checkmate
         // (no piece has a legal escape; we test all 448 × ~80 candidates).
@@ -320,6 +330,11 @@ const Bot = {
         // next event-loop tick, which gives the renderer a chance to paint
         // the indicator before we proceed with the heavy sync call below.
         await new Promise(function (r) { setTimeout(r, 0); });
+        if (wasCancelled()) {
+            if (typeof window !== 'undefined' && window._hideThinking) window._hideThinking();
+            console.log('[m13.4.3/bot-cancel] aborted before hasLegalMoves scan');
+            return Promise.resolve(false);
+        }
         const hasLegalMoves = gameBoard.hasLegalMoves(team);
         if (typeof window !== 'undefined' && window._hideThinking) {
             window._hideThinking();
@@ -366,6 +381,11 @@ const Bot = {
         // Yield once so the indicator paints before the (possibly slow)
         // synchronous search blocks the main thread.
         await new Promise(function (r) { setTimeout(r, 0); });
+        if (wasCancelled()) {
+            if (typeof window !== 'undefined' && window._hideThinking) window._hideThinking();
+            console.log('[m13.4.3/bot-cancel] aborted before strategy.getBestMove');
+            return Promise.resolve(false);
+        }
         const strategy = Bot.strategies[stratName];
         // M11.28a: smart strategy is now async (cooperative yields between
         // iterative-deepening iterations). Other strategies stay sync, but
@@ -376,6 +396,12 @@ const Bot = {
             : Bot.getBestMove(gameBoard, team); // fallback if registry is missing
         if (typeof window !== 'undefined' && window._hideThinking) {
             window._hideThinking();
+        }
+        // After the (potentially long) strategy search returns: if mode
+        // changed mid-search, discard the move rather than apply it.
+        if (wasCancelled()) {
+            console.log('[m13.4.3/bot-cancel] discarding move — strategy returned post-cancel');
+            return Promise.resolve(false);
         }
 
         if (!move) {
@@ -461,6 +487,25 @@ const Bot = {
                 '(strategy=' + stratName + ')'
             );
             setTimeout(() => {
+                // M13.4.3 — final cancel check before executing the
+                // move. If user switched to Two Players while we were
+                // sitting in the visual-gate setTimeout, drop the move
+                // and resolve(false) so callers know nothing happened.
+                if (wasCancelled()) {
+                    console.log('[m13.4.3/bot-cancel] visual-gate cancelled; not executing move');
+                    // Best-effort cleanup: clear the bot's piece highlight
+                    // so it doesn't get stuck in selected-state.
+                    if (typeof window !== 'undefined' && window.selectionSystem &&
+                        window.selectionSystem.selectedPiece) {
+                        try {
+                            window.selectionSystem.unhighlight(window.selectionSystem.selectedPiece);
+                            window.selectionSystem.selectedPiece = null;
+                        } catch (_) {}
+                    }
+                    if (gameBoard && gameBoard.graphics) gameBoard.graphics.hidePossibleMoves();
+                    resolve(false);
+                    return;
+                }
                 // Execute the move
                 Bot.executeMoveImmediate(gameBoard, moveManager, move, resolve);
             }, wait);
@@ -1087,3 +1132,27 @@ try {
 if (typeof window !== 'undefined') {
     window.Bot = Bot;
 }
+
+// M13.4.3 — cancel-generation counter for in-flight Bot.makeMove. Each
+// makeMove call captures the current value at entry; bumping this
+// counter (via cancelInFlight) signals every in-flight makeMove to bail
+// at its next await boundary without applying its move. Used by
+// main.js's setGameMode when the user switches to Two Players (or any
+// mode change) so an engine bot mid-search doesn't suddenly play a
+// move from a previous mode after the user has already taken control.
+//
+// Why a counter and not a boolean: multiple makeMove calls can be
+// in-flight simultaneously (rare but possible — e.g., a stale promise
+// from a previous mode racing with a newly scheduled one). Each gets a
+// snapshot of the counter at entry and bails if the live counter has
+// moved past it. A boolean would have ambiguous reset semantics.
+//
+// What this does NOT cancel: the underlying Pyodide search. The worker
+// keeps computing until time_budget_ms expires; we just discard the
+// returned move on the JS side. To truly abort the worker we'd need a
+// cancellation token in the bridge protocol — out of scope here.
+Bot._cancelGen = 0;
+Bot.cancelInFlight = function () {
+    Bot._cancelGen++;
+    console.log('[m13.4.3/bot-cancel] cancel requested; gen=' + Bot._cancelGen);
+};
