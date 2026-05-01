@@ -117,6 +117,10 @@ GameBoard.prototype = {
 						if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
 							window.SpectralPV.clear();
 						}
+						// M14.7: clear axial guide lines — focal piece just moved
+						if (window.SpectralAxialLines && typeof window.SpectralAxialLines.clear === 'function') {
+							window.SpectralAxialLines.clear();
+						}
 						// M14.6: refresh eval-breakdown bars at the new position
 						if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
 							window.SpectralEvalBreakdown.refresh();
@@ -154,6 +158,9 @@ GameBoard.prototype = {
 							if (window.SpectralQmCurrent) window.SpectralQmCurrent.refresh();
 							if (window.SpectralPV && typeof window.SpectralPV.clear === 'function') {
 								window.SpectralPV.clear();
+							}
+							if (window.SpectralAxialLines && typeof window.SpectralAxialLines.clear === 'function') {
+								window.SpectralAxialLines.clear();
 							}
 							if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
 								window.SpectralEvalBreakdown.refresh();

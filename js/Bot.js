@@ -993,6 +993,20 @@ Bot._engineGetBestMove = async function (evaluator) {
             try { window.SpectralPV.show(res.pv, /*team*/ 0); }
             catch (e) { /* PV overlay is non-critical; swallow */ }
         }
+        // M14.7 — focus axial guide lines on the engine's chosen origin
+        // square so the user sees what the bot is "thinking about." Cleared
+        // when the move executes (GameBoard.move() drops focus via
+        // SpectralAxialLines.clear hook below if we wire it; here we just
+        // set focus and let selectPiece/deselectPiece manage transitions).
+        if (typeof window !== 'undefined' && window.SpectralAxialLines &&
+            typeof window.SpectralAxialLines.setFocus === 'function' && res.move) {
+            try {
+                window.SpectralAxialLines.setFocus({
+                    x: res.move.x0, y: res.move.y0,
+                    z: res.move.z0, w: res.move.w0,
+                });
+            } catch (e) { /* non-critical */ }
+        }
         // Strategy contract from M13.2: return {x0..w1, score, isCapture}.
         // isCapture is informational; the engine doesn't tell us, so we
         // leave it false (downstream visual gate handles uniformly).
