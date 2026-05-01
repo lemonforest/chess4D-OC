@@ -222,4 +222,107 @@ test.describe('Bot stall reproduction with QM density tint (M13.7)', () => {
       botLoopErrs.map((e) => `  ${e}`).join('\n')
     ).toEqual([]);
   });
+
+  test('circuit breaker trips after 3 consecutive synthesized failures', async () => {
+    // M13.7c — verify the circuit breaker actually opens. We synthesize
+    // failures by stubbing Bot.makeMove to reject 4 times in a row, then
+    // assert: (a) only 3 [bot-loop-error] tags fire (bridge stops on 3rd
+    // because breaker opens), (b) the [bot-loop-circuit-tripped] tag
+    // fires exactly once, (c) the turn-text element shows the warning.
+    //
+    // Resetting the breaker via setGameMode → _resetBotLoopBreaker is
+    // also asserted (we click Two Players, then Watch Bots, and check
+    // a fresh failure can fire).
+
+    // Reset state cleanly: switch to Two Players to clear breaker, reset
+    // the move history.
+    await pageInstance.evaluate(() => {
+      const tp = document.getElementById('mode-singleplayer');
+      if (tp) tp.click();
+    });
+    await pageInstance.waitForTimeout(300);
+
+    // Stub Bot.makeMove to always reject. We save the original so we
+    // can restore it for the rest of the test suite (test isolation).
+    const stubbed = await pageInstance.evaluate(() => {
+      if (!window.Bot || typeof window.Bot.makeMove !== 'function') return false;
+      window.__origMakeMove = window.Bot.makeMove;
+      window.Bot.makeMove = function () {
+        return Promise.reject(new Error('synthetic test failure'));
+      };
+      // Clear any console-error counter we'd want fresh; record the
+      // current bot-loop-error tag count so we measure deltas.
+      window.__botLoopErrCountBefore = (window.__BRIDGE_LOG__ || []).length;
+      return true;
+    });
+    expect(stubbed, 'Bot.makeMove should be stubable').toBe(true);
+
+    // Capture errors during this test phase only.
+    const errsBefore = consoleErrors.length;
+
+    // Click Watch Bots to start the loop.
+    await pageInstance.evaluate(() => {
+      const wb = document.getElementById('mode-bot-vs-bot');
+      if (wb) wb.click();
+    });
+
+    // The breaker uses backoff 2s, 4s, 6s — total wait to trip is
+    // ~1.5s (initial delay) + 2s + 4s = 7.5s. Wait 12s for headroom.
+    await pageInstance.waitForTimeout(12_000);
+
+    const breakerState = await pageInstance.evaluate(() => {
+      // Restore original makeMove for test isolation.
+      if (window.__origMakeMove) {
+        window.Bot.makeMove = window.__origMakeMove;
+        delete window.__origMakeMove;
+      }
+      const turnText = document.getElementById('turn-text');
+      return {
+        turnTextContent: turnText ? turnText.textContent : null,
+        turnTextColor:   turnText ? turnText.style.color  : null,
+      };
+    });
+
+    const phaseErrs = consoleErrors.slice(errsBefore);
+    const botLoopErrCount    = phaseErrs.filter((e) => /\[bot-loop-error\]/.test(e)).length;
+    const circuitTrippedCount = phaseErrs.filter((e) => /\[bot-loop-circuit-tripped\]/.test(e)).length;
+
+    console.log(
+      `[circuit-breaker] tripped=${circuitTrippedCount} loopErrs=${botLoopErrCount} ` +
+      `turnText=${JSON.stringify(breakerState)}`
+    );
+
+    expect(
+      botLoopErrCount,
+      `Expected exactly 3 [bot-loop-error] events (one per allowed retry). ` +
+      `Got ${botLoopErrCount}. Phase errors:\n${phaseErrs.join('\n')}`
+    ).toBe(3);
+    expect(
+      circuitTrippedCount,
+      `Expected exactly 1 [bot-loop-circuit-tripped] event after 3 failures. ` +
+      `Got ${circuitTrippedCount}.`
+    ).toBe(1);
+    expect(
+      breakerState.turnTextContent,
+      `turn-text should show the breaker warning when tripped`
+    ).toMatch(/Bot halted/);
+
+    // Reset by switching to Two Players, then verify the breaker is reset
+    // (the warning color clears).
+    await pageInstance.evaluate(() => {
+      const tp = document.getElementById('mode-singleplayer');
+      if (tp) tp.click();
+    });
+    await pageInstance.waitForTimeout(300);
+    const afterReset = await pageInstance.evaluate(() => {
+      const turnText = document.getElementById('turn-text');
+      return {
+        color: turnText ? turnText.style.color : null,
+      };
+    });
+    expect(
+      afterReset.color,
+      `turn-text color should clear (be falsy) after game-mode reset`
+    ).toBeFalsy();
+  });
 });

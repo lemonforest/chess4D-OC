@@ -22,6 +22,29 @@ let currentGameMode = GAME_MODES.SINGLEPLAYER;
 // Bot move interval (for Bot vs Bot mode)
 let botMoveInterval = null;
 
+// M13.7c — circuit breaker for the bot-loop self-heal. PR #93 added a
+// .catch() that re-arms scheduleBotMove() after every Bot.makeMove
+// rejection, but with no upper bound — a permanent fault (e.g., worker
+// dead, chess-spectral broken in some way) would spin forever logging
+// errors every 2s and burning user CPU/battery. The circuit breaker
+// counts consecutive failures and after MAX_CONSECUTIVE_FAILURES it
+// opens the loop: stops re-arming, surfaces a visible status, and
+// requires the user to flip game-mode to reset. Successful moves reset
+// the counter (transient hiccups don't accumulate).
+const BOT_LOOP_MAX_CONSECUTIVE_FAILURES = 3;
+let _botLoopConsecutiveFailures = 0;
+let _botLoopCircuitOpen = false;
+// Resetters: any user action that switches game mode resets the breaker
+// so the user can recover by clicking Two Players → Watch Bots without
+// reloading. setGameMode (line ~2516 area) calls this.
+function _resetBotLoopBreaker() {
+    _botLoopConsecutiveFailures = 0;
+    _botLoopCircuitOpen = false;
+}
+if (typeof window !== 'undefined') {
+    window._resetBotLoopBreaker = _resetBotLoopBreaker;
+}
+
 // Game mode (local single player for now)
 const LocalMode = {
     move: function(x0, y0, z0, w0, x1, y1, z1, w1, receiving) {
@@ -2516,6 +2539,19 @@ function setGameMode(mode) {
         Bot.cancelInFlight();
     }
 
+    // M13.7c — reset the bot-loop circuit breaker. If a previous run
+    // tripped the breaker and the user is switching modes to recover,
+    // we want the next mode to start with a clean failure counter.
+    // Also clear the inline "⚠ Bot halted" turn-text status if set.
+    _resetBotLoopBreaker();
+    const statusElement = document.getElementById('turn-text');
+    if (statusElement) {
+        statusElement.style.color = ''; // restore default
+        // The actual text gets refreshed by moveManager.updateUI() below
+        // when scheduleBotMove or singleplayer init runs; we just clear
+        // the alarm color here.
+    }
+
     // Update current mode
     currentGameMode = mode;
     // M11.7: keep the window-exposed copy in sync so Bot.js sees the
@@ -2619,6 +2655,16 @@ function scheduleBotMove() {
     }
     
     if (shouldBotMove && Bot) {
+        // M13.7c — circuit breaker. Bail out before scheduling if the
+        // breaker has tripped. The user must switch game modes to reset.
+        if (_botLoopCircuitOpen) {
+            console.warn(
+                '[bot-loop-circuit-open] not scheduling bot move — circuit ' +
+                'breaker tripped after ' + BOT_LOOP_MAX_CONSECUTIVE_FAILURES +
+                ' consecutive failures. Click Two Players → Watch Bots to reset.'
+            );
+            return;
+        }
         // Schedule bot move after a short delay (to allow animation to complete)
         botMoveInterval = setTimeout(() => {
             // Bot.makeMove now returns a Promise and includes visual feedback.
@@ -2630,7 +2676,15 @@ function scheduleBotMove() {
             // "frozen" bot-vs-bot game. The .catch below logs with a
             // greppable tag and re-arms scheduleBotMove() so the loop
             // self-heals from transient bridge faults instead of stalling.
+            //
+            // M13.7c adds a circuit breaker on top: 3 consecutive failures
+            // and we stop re-arming + surface a visible status to the user.
             Bot.makeMove(gameBoard, moveManager, currentTeam).then((success) => {
+                // Reset the breaker on any successful return (whether the
+                // bot made a move or correctly detected checkmate). A
+                // transient hiccup followed by recovery shouldn't count
+                // against the failure budget.
+                _botLoopConsecutiveFailures = 0;
                 if (success) {
                     // Bot move completed, will check again after move completes
                 } else {
@@ -2647,27 +2701,51 @@ function scheduleBotMove() {
                 // failure escaped into Bot.makeMove's outer scope.
                 console.error(
                     '[bot-loop-error] Bot.makeMove rejected for team ' +
-                    currentTeam + ': ' + ((err && err.message) || err),
+                    currentTeam + ' (failure ' +
+                    (_botLoopConsecutiveFailures + 1) + '/' +
+                    BOT_LOOP_MAX_CONSECUTIVE_FAILURES + '): ' +
+                    ((err && err.message) || err),
                     err
                 );
-                // Don't deadlock the loop: re-arm a future move attempt.
-                // If the bridge is in a permanently bad state, the next
-                // attempt will fail too and log again — but that's still
-                // better than a silent stall. If the rejection was
-                // a transient (e.g., worker hiccup), the next attempt
-                // succeeds and the game keeps going.
+                _botLoopConsecutiveFailures++;
                 if (botMoveInterval) {
                     clearTimeout(botMoveInterval);
                     botMoveInterval = null;
                 }
+
+                // Trip the breaker after N consecutive failures. Stop
+                // re-arming, show a status message, surface to console
+                // with action items.
+                if (_botLoopConsecutiveFailures >= BOT_LOOP_MAX_CONSECUTIVE_FAILURES) {
+                    _botLoopCircuitOpen = true;
+                    console.error(
+                        '[bot-loop-circuit-tripped] ' +
+                        BOT_LOOP_MAX_CONSECUTIVE_FAILURES +
+                        ' consecutive Bot.makeMove failures — bot loop halted. ' +
+                        'Inspect window.__BRIDGE_LOG__.filter(e => !e.ok).slice(-10) ' +
+                        'for the underlying bridge errors. ' +
+                        'Click Two Players → Watch Bots to reset the breaker.'
+                    );
+                    // Show the failure in the turn-text area so the user
+                    // sees something is wrong without opening DevTools.
+                    const statusElement = document.getElementById('turn-text');
+                    if (statusElement) {
+                        statusElement.textContent =
+                            '⚠ Bot halted (3 errors) — see DevTools, then re-click mode';
+                        statusElement.style.color = '#dc7f7f';
+                    }
+                    return;
+                }
+
+                // Otherwise, re-arm with a back-off proportional to the
+                // failure count (2s, 4s, 6s) so transient faults get more
+                // time to clear before each retry.
+                const backoffMs = 2000 * _botLoopConsecutiveFailures;
                 setTimeout(() => {
-                    // Re-check mode in case the user clicked Two Players
-                    // during the rejection. scheduleBotMove() itself
-                    // gates on currentGameMode so this is safe.
                     if (typeof scheduleBotMove === 'function') {
                         scheduleBotMove();
                     }
-                }, 2000); // 2s back-off before retry
+                }, backoffMs);
             });
         }, 1500); // 1.5 second delay for visual effect
     }
