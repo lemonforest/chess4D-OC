@@ -36,19 +36,23 @@ const SMOKE_READY_TIMEOUT = 90_000;        // Pyodide cold-boot
 const PER_MOVE_TIMEOUT_MS = 30_000;        // each Bot.makeMove allowed up to 30s
 const MOVES_PER_STRATEGY = 2;              // 2 plies per strategy = quick smoke
 
-// Strategies to test. After M13.4.1 added the engine→v0 fallback, ALL
-// strategies must make a move at the starting position — the engine
-// strategies fall back to the v0 heuristic when the underlying chess-
-// spectral search exhausts its time_budget_ms (which it always does at
-// the 28-king starting position; pure-Python 4D move-gen takes ~250s
-// per the upstream docstring). The fallback ensures the game progresses
-// even when the engine itself can't finish a search.
+// Strategies to test. M13.4.4 adds a JS-side hard timeout that forces
+// engine-* to return within `BOT_THINK_TIME_MS + 500ms grace`. Default
+// budget is 4000ms, so engine plies should complete in ~4500ms wall
+// clock. expectedMaxMs is now a HARD assertion (not a soft warning) —
+// silent regression of the timeout would let elapsed creep back up and
+// fail this test loudly.
+//
+// Headroom: 6000ms accommodates 4500 (timeout+grace) + ~1500 (Pyodide
+// bridge round-trip + JS post-fallback overhead). If a future engine
+// completes in budget naturally, elapsed will be much lower; we only
+// fail when elapsed exceeds the hard cap.
 const STRATEGIES_TO_TEST = [
   { key: 'v0',              label: 'JS heuristic baseline',  expectedMaxMs: 5_000,  mustMakeMove: true },
   { key: 'random',          label: 'random control',         expectedMaxMs: 5_000,  mustMakeMove: true },
-  { key: 'engine-material', label: 'engine material (→v0 fallback)', expectedMaxMs: 25_000, mustMakeMove: true },
-  { key: 'engine-spectral', label: 'engine spectral (→v0 fallback)', expectedMaxMs: 25_000, mustMakeMove: true },
-  { key: 'engine-qm',       label: 'engine QM (→v0 fallback)',       expectedMaxMs: 25_000, mustMakeMove: true },
+  { key: 'engine-material', label: 'engine material (→v0 fallback)', expectedMaxMs: 6_000, mustMakeMove: true },
+  { key: 'engine-spectral', label: 'engine spectral (→v0 fallback)', expectedMaxMs: 6_000, mustMakeMove: true },
+  { key: 'engine-qm',       label: 'engine QM (→v0 fallback)',       expectedMaxMs: 6_000, mustMakeMove: true },
 ];
 
 test.describe('Bot match regression (M11.50)', () => {
@@ -158,15 +162,21 @@ test.describe('Bot match regression (M11.50)', () => {
         // Hard requirement: bot must not hang or throw.
         expect(result.ok, `${strategy.key} ply ${ply} (team ${team}): ${JSON.stringify(result)}`).toBe(true);
 
-        // Soft: bot should not exceed strategy's typical budget. We log but
-        // don't fail on this — Pyodide cold-boot warmup can spike the first
-        // engine call to ~10s. Test fails only on the hard PER_MOVE_TIMEOUT.
-        if (elapsed > strategy.expectedMaxMs) {
-          console.log(
-            `[bot-match] ${strategy.key} ply ${ply} took ${elapsed}ms ` +
-            `(soft cap was ${strategy.expectedMaxMs}ms; hard cap ${PER_MOVE_TIMEOUT_MS}ms — passing)`
-          );
-        }
+        // M13.4.4: bot must respect the per-strategy hard cap. For
+        // engine-* this is BOT_THINK_TIME_MS + grace + JS overhead;
+        // a regression of the JS-side timeout would let elapsed creep
+        // back up to the upstream's pure-Python search time (~minutes).
+        // First-ply Pyodide warmup can be slightly slower so we add an
+        // extra 2000ms headroom only on ply 0 of the FIRST engine
+        // strategy tested (the one that takes the cold-boot hit).
+        const isFirstEnginePly = (ply === 0 && /^engine-/.test(strategy.key));
+        const dynamicCap = strategy.expectedMaxMs +
+          (isFirstEnginePly ? 2000 : 0);
+        expect(
+          elapsed,
+          `${strategy.key} ply ${ply} took ${elapsed}ms; expected < ${dynamicCap}ms ` +
+          `(slider value + 500ms grace + JS overhead). M13.4.4 regression?`
+        ).toBeLessThan(dynamicCap);
       }
 
       // Verify the game state actually advanced. The move history length
