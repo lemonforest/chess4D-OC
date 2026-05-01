@@ -30,7 +30,13 @@
   let _scene = null;
   let _gameBoard = null;
   let enabled = false;
-  let channel = 'A1';
+  // M14.8a: default channel changed from 'A1' to 'STD4_X'. A1 is the
+  // trivial / orbit-projection channel — by construction it has uniform
+  // per-cell value (a single Fourier mode), so the heatmap renders
+  // uniform color and looks "broken" to users. STD4_X has per-cell
+  // variation at every position, computes via fast linear delta, and
+  // ships meaningful color out of the box.
+  let channel = 'STD4_X';
   let _initRequested = false;
 
   // M11.8: previously cached per-cell base positions, but this module

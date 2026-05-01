@@ -40,7 +40,8 @@
   let _scene = null;
   let _gameBoard = null;
   let enabled = false;
-  let channel = 'A1';
+  // M14.8a: default channel changed from 'A1' to 'STD4_X' (see board_tint).
+  let channel = 'STD4_X';
   let transform = 'linear';
   let colorMode = 'unipolar';
   let sliceAxis  = null;

@@ -250,7 +250,8 @@
   let _gameBoard = null;
   let _initRequested = false;
   let enabled = false;
-  let channel = 'A1';
+  // M14.8a: default channel changed from 'A1' to 'STD4_X' (see board_tint).
+  let channel = 'STD4_X';
   // 8 w-slices × 3 shells = 24 meshes. We pre-build empty BufferGeometry
   // meshes in init() and overwrite their position/color attributes on
   // each refresh; this avoids per-refresh re-allocation.

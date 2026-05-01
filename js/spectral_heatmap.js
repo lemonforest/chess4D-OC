@@ -52,7 +52,9 @@
   let _scene  = null;
   let _gameBoard = null;
   let enabled = false;
-  let channel = 'A1';
+  // M14.8a: default channel changed from 'A1' to 'STD4_X'. See note in
+  // spectral_board_tint.js for the rationale (A1 is uniform per-cell).
+  let channel = 'STD4_X';
   let transform  = 'linear';     // 'linear' | 'log1p'
   let colorMode  = 'unipolar';   // 'unipolar' | 'signed'
   let showMaxima = false;
