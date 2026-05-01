@@ -243,10 +243,10 @@
                     <select id="spectral-channel" aria-label="Spectral channel for hover overlay">
                         <option value="off" title="No overlay — destinations render with the default green tint.">Off</option>
                         <optgroup label="Fast (delta — linear)">
-                            <option value="A1" selected
-                                title="Orbit projection — overall complexity of the position. Default channel.">A1 — orbit projection</option>
-                            <option value="STD4_X"
-                                title="Coord-residual along X. Highlights moves that shift the piece distribution along the X axis.">STD4_X</option>
+                            <option value="A1"
+                                title="Orbit projection — overall position complexity (single scalar). NOTE: A1 is the trivial / symmetric channel — per-cell values are uniform by construction, so heatmaps with A1 show flat color. The channel sum is meaningful for tracking complexity; per-cell heatmaps need STD4_* or FIB_SYM_*.">A1 (uniform — sum only, not per-cell)</option>
+                            <option value="STD4_X" selected
+                                title="Coord-residual along X. Per-cell variation; highlights moves that shift the piece distribution along the X axis. Default channel post-M14.8a.">STD4_X</option>
                             <option value="STD4_Y"
                                 title="Coord-residual along Y.">STD4_Y</option>
                             <option value="STD4_Z"
