@@ -1046,3 +1046,11 @@ try {
         if (botBlack) Bot.setStrategy(1, botBlack);
     }
 } catch (_) { /* not in a browser; leave defaults */ }
+
+// M11.50: expose Bot on window so the headless regression test can drive
+// Bot.makeMove via page.evaluate. Top-level `const Bot = ...` lives in the
+// script-tag's lexical scope but isn't auto-promoted to window the way
+// `var` would be. Explicit assignment for test reachability.
+if (typeof window !== 'undefined') {
+    window.Bot = Bot;
+}
