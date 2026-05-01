@@ -96,7 +96,19 @@ GameBoard.prototype = {
 					{x: x1, y: y1, z: z1, w: w1}
 				).then((res) => {
 					if (!res || !res.ok) {
-						console.warn('[m4a] bridge.applyMove rejected', res);
+						// Greppable [bridge-applyMove-rejected] tag — signals state divergence.
+						// JS board has already updated; Python _state.push raised IllegalMoveError.
+						// Root cause: bot played a pseudo-legal move that leaves the king in check
+						// (Bot.getBestMove.filterIllegalMoves pass was added to prevent this).
+						// If this fires, the engine will search a stale Python position next turn.
+						// Inspect window.__BRIDGE_LOG__ for full diagnostics.
+						console.error(
+							`[bridge-applyMove-rejected] Python rejected move ` +
+							`(${x0},${y0},${z0},${w0})→(${x1},${y1},${z1},${w1}). ` +
+							`Error: ${res && res.error ? res.error : 'unknown'}. ` +
+							`JS board advanced but Python _state did NOT — state diverged. ` +
+							`Inspect window.__BRIDGE_LOG__.filter(e => !e.ok).slice(-5) for diagnostics.`
+						);
 					} else {
 						// M10: refresh board overlays after Python state advances.
 						// (No-ops when overlays are disabled.)

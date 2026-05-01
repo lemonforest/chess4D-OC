@@ -269,14 +269,75 @@ const Bot = {
         
         // Sort moves by score (best first)
         movesToUse.sort((a, b) => b.score - a.score);
-        
+
         // Pick from top moves (top 30% to add some randomness while still being smart)
         const topMovesCount = Math.max(1, Math.floor(movesToUse.length * window.BOT.SEARCH.TOP_FRACTION));
         const topMoves = movesToUse.slice(0, topMovesCount);
-        
-        // Randomly pick from top moves
-        const selectedMove = topMoves[Math.floor(Math.random() * topMoves.length)];
-        
+
+        // Shuffle top moves so the legal-move filter below picks randomly
+        // (previously we picked one random then returned — now we may need to
+        // try several until we find a fully legal one).
+        for (let i = topMoves.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [topMoves[i], topMoves[j]] = [topMoves[j], topMoves[i]];
+        }
+
+        // Root-cause fix for the applyChain timing / stale-engine-board bug.
+        //
+        // `piece.getPossibleMoves` returns PSEUDO-legal moves — it doesn't
+        // filter for moves that leave the king in check. Human moves go
+        // through `filterIllegalMoves` before execution; bot moves never
+        // did. When the bot plays a pseudo-legal move, `bridge.applyMove`
+        // calls Python `_state.push(move)` which raises `IllegalMoveError`.
+        // The JS board has already updated but Python state has not —
+        // creating silent state divergence. Subsequent engine searches then
+        // search the stale (un-updated) Python board, producing moves that
+        // reference squares empty or wrong-team on the JS board.
+        //
+        // Fix: validate each top candidate via `filterIllegalMoves` (JS-only,
+        // no Python round-trip) before returning. We only validate until we
+        // find one legal move, so the cost is O(pieces) not O(all_candidates).
+        if (typeof filterIllegalMoves === 'function') {
+            for (const candidate of topMoves) {
+                const filteredMoves = filterIllegalMoves(
+                    gameBoard,
+                    candidate.x0, candidate.y0, candidate.z0, candidate.w0,
+                    [{ x: candidate.x1, y: candidate.y1, z: candidate.z1, w: candidate.w1,
+                       possibleCapture: candidate.isCapture || false }],
+                    team
+                );
+                if (filteredMoves && filteredMoves.length > 0) {
+                    return {
+                        x0: candidate.x0, y0: candidate.y0, z0: candidate.z0, w0: candidate.w0,
+                        x1: candidate.x1, y1: candidate.y1, z1: candidate.z1, w1: candidate.w1,
+                    };
+                }
+            }
+            // All top candidates were pseudo-legal (leave king in check) —
+            // scan the full sorted list for any legal move.
+            for (const candidate of movesToUse.slice(topMovesCount)) {
+                const filteredMoves = filterIllegalMoves(
+                    gameBoard,
+                    candidate.x0, candidate.y0, candidate.z0, candidate.w0,
+                    [{ x: candidate.x1, y: candidate.y1, z: candidate.z1, w: candidate.w1,
+                       possibleCapture: candidate.isCapture || false }],
+                    team
+                );
+                if (filteredMoves && filteredMoves.length > 0) {
+                    return {
+                        x0: candidate.x0, y0: candidate.y0, z0: candidate.z0, w0: candidate.w0,
+                        x1: candidate.x1, y1: candidate.y1, z1: candidate.z1, w1: candidate.w1,
+                    };
+                }
+            }
+            console.warn(`[bot-v0] no fully-legal moves found for team ${team} after filterIllegalMoves pass`);
+            return null;
+        }
+
+        // Fallback (filterIllegalMoves not available): pick first top move
+        // as before. The applyChain guards in executeMoveImmediate + makeMove
+        // will catch and discard any stale result.
+        const selectedMove = topMoves[0];
         return {
             x0: selectedMove.x0,
             y0: selectedMove.y0,
