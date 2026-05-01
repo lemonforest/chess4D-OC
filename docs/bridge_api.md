@@ -105,6 +105,103 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 
 ---
 
+## Debugging surfaces (M13.7)
+
+Every bridge call funnels through one instrumented `call()` in `js/spectral_bridge.js`. That gives us a single place to record telemetry, dispatch events, and surface failures with a greppable tag. Use these surfaces when a bot stalls, a viz layer goes blank, or any other "X stopped working" report.
+
+### `window.__BRIDGE_LOG__` — ring buffer (last 100 calls)
+
+```js
+window.__BRIDGE_LOG__               // Array, oldest→newest, capped at 100
+window.__BRIDGE_LOG__.slice(-10)    // last 10 calls
+window.__BRIDGE_LOG__.filter(e => !e.ok)   // only the failures
+```
+
+Each entry:
+```js
+{
+  id:            42,                       // monotonic call id
+  method:        'getQmDensity',           // bridge method name
+  args:          [<summarized>],           // Float32Arrays summarized as <Float32Array(N)>; deep objects as {N keys}
+  t0:            1714595432123,            // start (Date.now())
+  durationMs:    18,                       // round-trip wall-clock
+  ok:            true,                     // resolved vs rejected
+  // Failure-only:
+  errorName:     'Error',
+  errorMessage:  'Worker not ready (status=booting)'
+}
+```
+
+### `window.__BRIDGE_INFLIGHT__` — live in-flight calls (Map)
+
+```js
+Array.from(window.__BRIDGE_INFLIGHT__.values())
+// → [{ id, method, t0, args }]    everything currently waiting on the worker
+```
+
+Useful when the page seems unresponsive: if `__BRIDGE_INFLIGHT__` shows `getBestMove` sitting for a minute, the engine is the culprit, not the UI.
+
+### CustomEvents on `document`
+
+The instrumented `call()` dispatches two events for every bridge call. Subscribe from anywhere — UI widgets, dev consoles, ad-hoc inspection scripts.
+
+```js
+document.addEventListener('bridge:call:start', (e) => {
+  // e.detail = { id, method, t0, args }
+});
+document.addEventListener('bridge:call:end', (e) => {
+  // e.detail = { id, method, durationMs, ok,
+  //              errorName?, errorMessage?  // present on failure
+  //            }
+});
+
+// Worker-level error (separate from per-call failures):
+document.addEventListener('bridge:worker:error', (e) => {
+  // e.detail = { message }
+});
+```
+
+The `.think-budget` UI next to the "Watch Bots" button uses these — it filters for `method === 'getBestMove'` to show elapsed/budget while the engine is searching.
+
+### Greppable failure tags in console
+
+Every bridge-call rejection prints a single-line, structured `console.error`:
+
+```
+[bridge-call-failed] method=getQmDensity ms=128 err=Error: <message>
+```
+
+Plus the bot loop has its own `.catch()` tag:
+```
+[bot-loop-error] Bot.makeMove rejected for team 1: <message>
+```
+
+CI logs and headless-test harnesses (`tests/bot_stall_qm_density.spec.js`) grep for these tags directly. If you're filing a bug, copy any `[bridge-call-failed]` lines along with `JSON.stringify(window.__BRIDGE_LOG__.slice(-20))`.
+
+### Quick triage flow
+
+When a viz layer or bot path "just stops":
+
+```js
+// 1. Anything failing right now?
+window.__BRIDGE_LOG__.filter(e => !e.ok).slice(-5)
+
+// 2. Anything stuck waiting on the worker?
+Array.from(window.__BRIDGE_INFLIGHT__.values())
+
+// 3. Most recent call to the suspect method?
+window.__BRIDGE_LOG__.filter(e => e.method === 'getBestMove').slice(-3)
+
+// 4. Total call count and failure rate
+const log = window.__BRIDGE_LOG__;
+const fails = log.filter(e => !e.ok).length;
+console.log(`${fails}/${log.length} failures`);
+```
+
+Cost: every bridge call adds one `Date.now()` + one push + one CustomEvent dispatch. Sub-µs against any real RPC roundtrip (~1ms minimum). Keep it on in production.
+
+---
+
 ## chess-spectral 1.6.1 engine surface — **HONORED**, wire-up via M13.4
 
 The §16 ship-gate release delivered every engine method we asked for, plus the bonus `pv: List[Move4D]` principal variation in `SearchResult`. Bridge wire-up planned for M13.4 (`getBestMove`) and follow-ups:
