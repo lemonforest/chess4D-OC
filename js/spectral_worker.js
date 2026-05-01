@@ -1,23 +1,36 @@
 // spectral_worker.js — Pyodide host running in a Web Worker.
 //
-// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.6.1) and
+// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.7.1) and
 // python-chess4d-oana-chiru (>=0.4.0), and exposes a small RPC surface to
 // the main thread via spectral_bridge.js.
 //
 // chess-spectral 1.5.0 (released 2026-04-29) shipped the §17.1 + §17.5
-// QM surface; 1.6.1 (April 2026) adds the §16 ship-gate engine, bitboard
-// move-gen, and a third legality oracle:
+// QM surface; 1.6.1 added the §16 ship-gate engine, bitboard move-gen,
+// and a third legality oracle; 1.7.1 makes the engine genuinely playable
+// at dense positions and restores FEN4 backward-compat:
 //   - chess_spectral.qm_4d           — kinematic QM (states, observables, B_4)  [1.5+]
 //   - chess_spectral.qm_4d_dynamics  — unitary moves, evolve_under_h0           [1.5+]
 //   - chess_spectral.qm_4d_bridge    — §17.1 QM + §17.5 dev/debug bridge        [1.5+]
 //   - chess_spectral_4d              — 4D game-state package + .bridge          [1.5+]
-//   - chess_spectral.spatial_4d      — Bitboard4D, attack tables, ray tables    [1.6+, NEW]
-//   - chess_spectral_4d.engine       — search core + 3 evaluators (mat/qm/spec) [1.6+, NEW]
-//   - chess_spectral.engine.tournament — round-robin self-play harness          [1.6+, NEW]
-//   - Discrete-Laplacian eigenbasis as 3rd legality oracle                      [1.6+, NEW]
-//   - chess_spectral.frame_v5        — v5 wire format w/ XOR-stream encoding    [1.6+, NEW]
-// See docs/bridge_api.md for the wire-up plan; chess4D-OC will surface
-// the engine + new oracles in M13.4 / M11.32 / M11.33.
+//   - chess_spectral.spatial_4d      — Bitboard4D, attack tables, ray tables    [1.6+]
+//   - chess_spectral_4d.engine       — search core + 3 evaluators (mat/qm/spec) [1.6+]
+//   - chess_spectral.engine.tournament — round-robin self-play harness          [1.6+]
+//   - Discrete-Laplacian eigenbasis as 3rd legality oracle                      [1.6+]
+//   - chess_spectral.frame_v5        — v5 wire format w/ XOR-stream encoding    [1.6+]
+//   - SearchOptions.time_budget_ms checked MID-ITERATION                        [1.7.1, NEW]
+//   - FEN4 parser accepts BOTH `Pw@x,y,z,w` and `P/w@x,y,z,w` (slash compat)    [1.7.1, NEW]
+//
+// Practical impact of 1.7.1 for chess4D-OC:
+//   1. Engine bots return real moves at the 28-king starting position
+//      within their slider budget (was: search ran for ~8 minutes, fell
+//      back to v0). The M13.4.4 JS-side Promise.race hard timeout becomes
+//      a defense-in-depth backstop that rarely fires.
+//   2. M11.50 regression test should still pass — engine plies will now
+//      complete naturally in budget (well under the 6s hard cap).
+//   3. Our `_state_to_fen4` no-slash format still works; we don't have to
+//      change anything to parse (we don't ingest FEN4 anyway).
+//
+// See docs/bridge_api.md for the wire-up plan.
 //
 // Protocol: { id, method, args } -> { id, ok, result } | { id, ok:false, error }
 // See ~/.claude/projects/D--GitHub-chess4D-OC/memory/api-contracts.md.
@@ -56,15 +69,14 @@ async function ensureInit() {
     const micropip = pyodide.pyimport('micropip');
 
     // keep_going=True so a failure on one package doesn't block the others.
-    // chess-spectral 1.6.1 (Apr 2026) adds the §16 ship-gate engine
-    // (search + tournament + 3 evaluators), bitboard4d move-gen via
-    // chess_spectral.spatial_4d, the third "discrete-Laplacian
-    // eigenbasis" legality oracle, and the v5 wire format with
-    // XOR-stream compression. M11.31 is the canary — just bump the
-    // pin and verify Pyodide can load 1.6.1 cleanly. The new surfaces
-    // get wired in M13.4 / M11.32 / M11.33 (see docs/bridge_api.md).
+    // chess-spectral 1.7.1 (May 2026) adds mid-iteration time_budget_ms
+    // checks in SearchOptions (search now returns within budget at all
+    // positions, including the dense 28-king starting position) and
+    // restores FEN4 backward-compat (parser accepts both `Pw@` and the
+    // legacy `P/w@` slash form). Both improvements transparent to our
+    // worker; pin bump is enough to pick them up.
     await micropip.install(
-      ['chess-spectral>=1.6.1', 'python-chess4d-oana-chiru>=0.4.0'],
+      ['chess-spectral>=1.7.1', 'python-chess4d-oana-chiru>=0.4.0'],
       true /* keep_going */
     );
 
@@ -370,15 +382,15 @@ def _state_to_fen4(state):
         char = upper if p.color == Color.WHITE else upper.lower()
         coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
         if p.piece_type == PieceType.PAWN and p.pawn_axis is not None:
-            # FEN4 v1 pawn-axis syntax per chess-spectral 1.6.1's strict
-            # parser (chess_spectral.fen_4d.parse): "Pw@x,y,z,w" — the
-            # axis letter directly follows the piece char with NO slash.
-            # Pre-fix this serialized "P/w@..." which 1.5 may have
-            # accepted but 1.6.1 explicitly rejects with
-            # "pawn 'P' must be followed by axis letter ('w' or 'y'), got '/'".
-            # Bug surfaced when bot vs bot hung after move 1 — Bot.engine
-            # round-trips state through FEN4 to feed Board4D.from_fen, and
-            # the parse error returned ok=false from getBestMove.
+            # FEN4 v1 pawn-axis syntax: emit "Pw@x,y,z,w" (no slash).
+            # chess-spectral 1.6.1's strict parser rejected the slash form
+            # ("pawn 'P' must be followed by axis letter ('w' or 'y'), got
+            # '/'"), causing bot-vs-bot to hang after move 1 in PR #80
+            # because Bot.engine round-trips state through FEN4 to feed
+            # Board4D.from_fen. chess-spectral 1.7.1 (M11.51) re-accepts
+            # BOTH the no-slash form AND the legacy slash form; we keep
+            # emitting no-slash for cross-version compatibility (works on
+            # 1.6.1 strict and 1.7.1+ lenient).
             placements.append(f'{char}{p.pawn_axis.name.lower()}@{coord}')
         else:
             placements.append(f'{char}@{coord}')

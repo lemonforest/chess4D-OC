@@ -1028,21 +1028,24 @@ Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
         window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS != null)
         ? window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS
         : 4000;
-    // M13.4.4 — JS-side hard timeout. chess-spectral 1.6.1's
-    // SearchOptions.time_budget_ms is checked BETWEEN iterative-deepening
-    // iterations only; depth 1 alone at the dense 28-king starting
-    // position takes ~8 minutes of pure-Python move generation per the
-    // upstream docstring (~250s × WASM overhead). Without a JS-side
-    // timeout the slider is essentially advisory — bot appears stuck
-    // for many minutes regardless of slider value.
+    // M13.4.4 — JS-side hard timeout (defense-in-depth backstop after
+    // chess-spectral 1.7.1's mid-iteration budget check shipped).
     //
-    // Promise.race vs setTimeout(thinkTimeOverride + grace) forces
-    // the v0 fallback at the slider boundary. The bridge's underlying
-    // search keeps running in the worker until it returns; we just
-    // discard the result. Caveat: subsequent bridge calls still queue
-    // in the worker behind the slow-running search until it completes.
-    // Proper fix is upstream cancellation protocol (M11.51 C-extension
-    // wheels likely make budget checks fast enough to be honored).
+    // Pre-1.7.1 chess-spectral checked SearchOptions.time_budget_ms only
+    // BETWEEN iterative-deepening iterations; depth 1 alone at the dense
+    // 28-king starting position took ~8 minutes (pure-Python move-gen
+    // ~250s × Pyodide WASM overhead). The slider was effectively
+    // advisory; bot appeared stuck for minutes regardless of slider
+    // value. JS-side Promise.race forced the v0 fallback at slider+grace,
+    // restoring user-facing budget control.
+    //
+    // chess-spectral 1.7.1 (M11.51 pin bump) threads the budget check
+    // INTO the search inner loop, so the engine returns within budget
+    // upstream-natively (verified offline: depth-1 at starting position
+    // returns in ~2001ms with budget=2000ms, with a real best_move).
+    // The Promise.race below now rarely fires — kept as a backstop in
+    // case the upstream check ever drifts (regression catch) or the
+    // worker JS-RPC overhead spikes unexpectedly.
     const HARD_TIMEOUT_GRACE_MS = 500;
     const hardTimeoutMs = thinkTimeOverride + HARD_TIMEOUT_GRACE_MS;
     try {
