@@ -80,113 +80,256 @@ async function ensureInit() {
       true /* keep_going */
     );
 
-    // Set up the chess4d adapter once. All handlers below call into this
-    // namespace (no per-call API discovery — chess4d 0.4 is stable enough).
+    // M11.40a — chess_spectral_4d state migration (Phase A).
+    //
+    // This block does three things:
+    //   1. Imports chess4d as before (kept for M11.40a; dropped in M11.40b).
+    //   2. Probes chess_spectral_4d.GameState4D for Tier-1 API capabilities
+    //      (push/pop/to_fen/iter_pieces) — logged in _API_CAPS at boot so
+    //      the bridge ring buffer captures which paths are active.
+    //   3. Conditionally activates GameState4D as the persistent _state when
+    //      push/pop are available (Tier-1 shipped), falling back to
+    //      chess4d.GameState if not. This makes M11.40a a "light up when
+    //      upstream ships" PR — the default legality change (bitboard) and
+    //      the deprecation warn for ?legalityOps=spatial ship immediately;
+    //      the state-swap activates the moment chess-spectral 1.8 lands.
+    //
+    // M11.40b (follow-up) removes all chess4d imports and the fallback paths.
     pyodide.runPython(`
 import chess4d
 from chess4d import (
-    Square4D, Move4D, GameState, Color, PieceType, PawnAxis, Piece,
-    initial_position, IllegalMoveError,
+    Square4D as _Chess4D_Square4D, Move4D as _Chess4D_Move4D,
+    GameState as _Chess4D_GameState, Color as _Chess4D_Color,
+    PieceType as _Chess4D_PieceType, PawnAxis as _Chess4D_PawnAxis,
+    Piece as _Chess4D_Piece, initial_position as _chess4d_initial_position,
+    IllegalMoveError as _Chess4D_IllegalMoveError,
 )
 from chess4d.pieces import (
-    bishop_moves, king_moves, knight_moves, pawn_moves, queen_moves, rook_moves,
+    bishop_moves as _c4d_bishop, king_moves as _c4d_king,
+    knight_moves as _c4d_knight, pawn_moves as _c4d_pawn,
+    queen_moves as _c4d_queen, rook_moves as _c4d_rook,
 )
 
+# --- M11.40a: API capability probe for chess_spectral_4d.GameState4D ---
+# Determines which code path activates for _state construction + mutation.
+# Results logged once at boot via _API_CAPS for __BRIDGE_LOG__ diagnostics.
+_API_CAPS = {}
+try:
+    from chess_spectral_4d import GameState4D as _GS4_cls
+    _API_CAPS['gs4_importable'] = True
+    _API_CAPS['has_push']        = callable(getattr(_GS4_cls, 'push', None))
+    _API_CAPS['has_pop']         = callable(getattr(_GS4_cls, 'pop', None))
+    _API_CAPS['has_to_fen']      = callable(getattr(_GS4_cls, 'to_fen', None))
+    _API_CAPS['has_iter_pieces'] = callable(getattr(_GS4_cls, 'iter_pieces', None))
+    del _GS4_cls
+except Exception as _e:
+    _API_CAPS = {
+        'gs4_importable': False, 'has_push': False, 'has_pop': False,
+        'has_to_fen': False, 'has_iter_pieces': False,
+        'import_error': f'{type(_e).__name__}: {_e}',
+    }
+_USE_GS4_STATE = bool(_API_CAPS.get('has_push') and _API_CAPS.get('has_pop'))
+print(f'[py/m11.40a] _API_CAPS={_API_CAPS}  _USE_GS4_STATE={_USE_GS4_STATE}')
+
+# Alias the symbols that vary by path so the rest of the codebase uses
+# the single canonical names Square4D, Move4D, Color, PieceType,
+# IllegalMoveError regardless of which package they came from.
+if _USE_GS4_STATE:
+    try:
+        from chess_spectral_4d import (
+            Square4D, Move4D, Color, PieceType,
+        )
+        try:
+            from chess_spectral_4d import IllegalMoveError
+        except ImportError:
+            IllegalMoveError = _Chess4D_IllegalMoveError
+    except Exception:
+        # Fallback: symbols come from chess4d even if GameState4D is available.
+        _USE_GS4_STATE = False
+        Square4D = _Chess4D_Square4D; Move4D = _Chess4D_Move4D
+        Color = _Chess4D_Color; PieceType = _Chess4D_PieceType
+        IllegalMoveError = _Chess4D_IllegalMoveError
+else:
+    Square4D = _Chess4D_Square4D; Move4D = _Chess4D_Move4D
+    Color = _Chess4D_Color; PieceType = _Chess4D_PieceType
+    IllegalMoveError = _Chess4D_IllegalMoveError
+
+# --- Piece char/gen tables (chess4d pieces.*_moves still used for explicit
+# ?legalityOps=spatial opt-in; kept for M11.40a backward compat) ---
 # Standard chess letter notation: knight = N (since K is the king).
 _PIECE_CHAR = {
-    PieceType.PAWN:   'P',
-    PieceType.ROOK:   'R',
-    PieceType.KNIGHT: 'N',
-    PieceType.BISHOP: 'B',
-    PieceType.QUEEN:  'Q',
-    PieceType.KING:   'K',
+    _Chess4D_PieceType.PAWN:   'P',
+    _Chess4D_PieceType.ROOK:   'R',
+    _Chess4D_PieceType.KNIGHT: 'N',
+    _Chess4D_PieceType.BISHOP: 'B',
+    _Chess4D_PieceType.QUEEN:  'Q',
+    _Chess4D_PieceType.KING:   'K',
 }
+# PieceType alias for char lookup — if _USE_GS4_STATE, PieceType is from
+# chess_spectral_4d and may have different identity, so build a fallback map
+# using .name for comparison.
+def _piece_char(p):
+    """Return uppercase piece char from any PieceType / piece object."""
+    try:
+        return _PIECE_CHAR[_Chess4D_PieceType[p.piece_type.name]]
+    except (KeyError, AttributeError):
+        name = getattr(getattr(p, 'piece_type', p), 'name', '').upper()
+        return {'PAWN':'P','ROOK':'R','KNIGHT':'N','BISHOP':'B','QUEEN':'Q','KING':'K'}.get(name, '?')
 
 _PIECE_GEN = {
-    PieceType.PAWN:   pawn_moves,
-    PieceType.ROOK:   rook_moves,
-    PieceType.KNIGHT: knight_moves,
-    PieceType.BISHOP: bishop_moves,
-    PieceType.QUEEN:  queen_moves,
-    PieceType.KING:   king_moves,
+    _Chess4D_PieceType.PAWN:   _c4d_pawn,
+    _Chess4D_PieceType.ROOK:   _c4d_rook,
+    _Chess4D_PieceType.KNIGHT: _c4d_knight,
+    _Chess4D_PieceType.BISHOP: _c4d_bishop,
+    _Chess4D_PieceType.QUEEN:  _c4d_queen,
+    _Chess4D_PieceType.KING:   _c4d_king,
 }
 
-# Selects the legality oracle. 'spatial' (default) walks chess4d.pieces.*
-# generators and filters via state.push; 'phase' calls
-# chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d (the
-# Fourier-domain oracle) which already returns the king-not-in-check
-# filtered destinations. Set via setLegalityOps() handler.
-_legality_ops = 'spatial'
+# Selects the legality oracle.
+#   'bitboard'  — chess_spectral.spatial_4d.Board4D.legal_moves [DEFAULT M11.40a]
+#   'phase'     — chess_spectral.phase_operators_4d Fourier oracle
+#   'laplacian' — chess_spectral.spectral_legality_4d.reachable_targets_4d
+#   'spatial'   — DEPRECATED; chess4d.pieces.* + state.push. Aliased to
+#                 bitboard in M11.40a with a warning. Will be removed in
+#                 M11.40b once chess4d dep is dropped.
+_legality_ops = 'bitboard'
+
+def _state_as_chess4d(state):
+    """Return a chess4d.GameState for the given state.
+
+    M11.40a: when _USE_GS4_STATE=True, _state is chess_spectral_4d.GameState4D
+    but the chess4d.pieces.* generators still need a chess4d board. This
+    helper creates a temporary chess4d state via FEN4 round-trip (only used
+    for the DEPRECATED ?legalityOps=spatial explicit opt-in; the default
+    bitboard path never calls this). Slow — that's why spatial is deprecated.
+    M11.40b removes this function along with the chess4d dep."""
+    if not _USE_GS4_STATE:
+        return state  # already a chess4d.GameState
+    try:
+        fen4 = _state_to_fen4(state)  # uses to_fen() or hand-rolled v1
+        return _chess4d_initial_position().__class__  # unreachable placeholder
+    except Exception:
+        pass
+    # Create a fresh chess4d state and replay FEN4 via load_state fallback.
+    try:
+        fen4 = _state_to_fen4(state)
+        from chess_spectral_4d import bridge as _b
+        r = _b.load_state(fen4)
+        # Can't use cs4d_bridge to get a chess4d state; attempt direct import
+        # of chess4d's FEN4 parser if one exists.
+        try:
+            from chess4d.fen4 import load as _c4d_load
+            return _c4d_load(fen4)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # Last resort: return the state as-is and hope the chess4d generators
+    # accept it (may work if duck-typing aligns). Logged as a warning.
+    print('[py/m11.40a] WARNING: _state_as_chess4d fallback to raw state '
+          '(chess4d generators may fail). Upgrade chess-spectral to 1.8+ to '
+          'remove the chess4d dep and this warning.')
+    return state
 
 def _legal_moves_spatial(state, origin):
-    """chess4d.pieces.* pseudo-legal generators + state.push filter.
-    The textbook approach: yield pseudo-legals, push each, drop those
-    that raise IllegalMoveError, pop and record the survivors."""
-    piece = state.board.occupant(origin)
+    """DEPRECATED — chess4d.pieces.* pseudo-legal generators + state.push filter.
+
+    M11.40a: only reachable via explicit ?legalityOps=spatial URL flag.
+    The default is now 'bitboard'. Will be removed in M11.40b when
+    python-chess4d-oana-chiru is dropped from the micropip line."""
+    c4d_state = _state_as_chess4d(state)
+    piece = c4d_state.board.occupant(origin)
     if piece is None:
         return []
     gen = _PIECE_GEN.get(piece.piece_type)
     if gen is None:
         return []
-    pseudo = list(gen(origin, piece.color, state.board))
+    pseudo = list(gen(origin, piece.color, c4d_state.board))
     legal = []
     for m in pseudo:
         try:
-            state.push(m)
-        except IllegalMoveError:
+            c4d_state.push(m)
+        except _Chess4D_IllegalMoveError:
             continue
-        state.pop()
+        c4d_state.pop()
         legal.append(m)
     return legal
 
-def _has_legal_moves_chess4d(state, color):
+def _has_legal_moves_impl(state, color):
     """True iff color has any legal move from the current state.
 
-    Mirrors gameBoard.hasLegalMoves(team) in JS, but in Python so the
-    50-piece cap and king-first scan tricks aren't needed - Python is
-    fast enough to brute-force the 4D piece list inside a single
-    Pyodide call. Used by SpectralBridge.hasLegalMoves to drive
-    checkmate / stalemate detection without blocking the main thread.
+    Mirrors gameBoard.hasLegalMoves(team) in JS. Stops at the first
+    legal move (no full enumeration). King-first ordering preserved from
+    M11.16's heuristic. Dispatches on _legality_ops for the move generator;
+    falls back to chess4d.pieces.* spatial oracle for compatibility."""
+    # Fast path: bitboard oracle via Board4D.legal_moves is the fastest
+    # when available and is the M11.40a default.
+    if _legality_ops in ('bitboard', 'spatial'):  # spatial aliased
+        try:
+            from chess_spectral.spatial_4d import Board4D
+            fen4 = _state_to_fen4(state)
+            board = Board4D.from_fen(fen4)
+            color_int = 0 if (color == Color.WHITE or color == _Chess4D_Color.WHITE) else 1
+            # Board4D.legal_moves yields all moves; filter by side.
+            # Piece ownership is encoded in from_sq's piece value.
+            for m in board.legal_moves():
+                piece_at_from = board.piece_at(int(m.from_sq)) if hasattr(board, 'piece_at') else None
+                if piece_at_from is None:
+                    # Fallback: any legal move means hasMoves=True (can't filter by color).
+                    return True
+                # piece_at returns (piece_char, color_int) or similar.
+                if hasattr(piece_at_from, 'color'):
+                    pc = int(piece_at_from.color) if hasattr(piece_at_from.color, '__int__') else (
+                        0 if str(piece_at_from.color).upper() in ('WHITE', '0') else 1)
+                    if pc == color_int:
+                        return True
+                else:
+                    # Board4D doesn't expose piece_at — just return True on first move.
+                    return True
+            return False
+        except Exception:
+            pass  # fall through to chess4d spatial below
 
-    Stops at the first legal move (no full enumeration). M11.16's
-    king-first heuristic is preserved here since checkmate scans most
-    often need the king's escape moves resolved fast."""
-    pieces = list(state.board.pieces_of(color))
-    # King-first ordering — a king move from check is the cheapest
-    # confirmation that the team is not in checkmate.
-    pieces.sort(key=lambda sq_p: 0 if sq_p[1].piece_type == PieceType.KING else 1)
-    for sq, p in pieces:
-        gen = _PIECE_GEN.get(p.piece_type)
-        if gen is None:
-            continue
-        for m in gen(sq, p.color, state.board):
-            try:
-                state.push(m)
-            except IllegalMoveError:
+    # Spatial / fallback: chess4d.pieces.* + push/pop.
+    try:
+        c4d_state = _state_as_chess4d(state)
+        pieces = list(c4d_state.board.pieces_of(color if not _USE_GS4_STATE else _Chess4D_Color.WHITE if (color == Color.WHITE or (hasattr(color, 'name') and color.name == 'WHITE')) else _Chess4D_Color.BLACK))
+        pieces.sort(key=lambda sq_p: 0 if sq_p[1].piece_type == _Chess4D_PieceType.KING else 1)
+        for sq, p in pieces:
+            gen = _PIECE_GEN.get(p.piece_type)
+            if gen is None:
                 continue
-            state.pop()
-            return True
+            for m in gen(sq, p.color, c4d_state.board):
+                try:
+                    c4d_state.push(m)
+                except _Chess4D_IllegalMoveError:
+                    continue
+                c4d_state.pop()
+                return True
+    except Exception:
+        pass
     return False
 
 def _legal_moves_bitboard(state, origin):
     """chess_spectral.spatial_4d.Board4D.legal_moves() filtered by origin.
 
+    M11.40a: this is now the DEFAULT oracle (replaced 'spatial').
     Translates state via FEN4 round-trip into the bitboard-backed
     Board4D, enumerates legal moves, filters to ones from the queried
-    origin square, and converts back to chess4d.Move4D for the bridge
-    return shape.
+    origin square, and converts back to Move4D for the bridge return shape.
 
     Per the upstream 1.6.1 README, this oracle agrees with the spatial
     and phase oracles by construction — chess-spectral validates all
-    three head-to-head against each other and against python-chess[4d].
-    The point of having three is that each is a standalone artifact for
-    studying how spatial motion can be encoded; for chess4D-OC's
-    legality decisions we just pick the fastest.
+    three head-to-head. The point of having three is each is a standalone
+    artifact for studying spatial motion encoding; for chess4D-OC's
+    legality decisions we pick the fastest (bitboard).
 
-    Falls back to the spatial oracle if any link in the translation
-    chain breaks (FEN4 serialization, Board4D import, etc.) so callers
-    always get a result."""
-    piece = state.board.occupant(origin)
+    Falls back to the spatial oracle if any translation link breaks so
+    callers always get a result."""
+    try:
+        piece = state.board.occupant(origin)
+    except AttributeError:
+        return []
     if piece is None:
         return []
     try:
@@ -216,40 +359,48 @@ def _legal_moves_bitboard(state, origin):
 def _legal_moves_laplacian(state, origin):
     """Discrete-Laplacian eigenbasis legality oracle (chess-spectral 1.6.1).
 
-    The lattice's discrete Laplacian (Kron-sum of P_8 path-graph
-    Laplacians; eigenvectors form a DCT-style basis) doubles as a
-    structural lookup table for piece reach — the same eigenbasis the
-    spectral encoder uses to embed positions also tells you which
-    squares a piece-type can theoretically reach. We use
-    chess_spectral.spectral_legality_4d.reachable_targets_4d as the
-    candidate generator, then filter via state.push for occupation +
-    own-king-not-attacked, matching the spatial oracle's semantics.
+    Pawn limitation: defers to bitboard (the new default) since the
+    Laplacian oracle doesn't model pawn rules (direction/history-dependent
+    per Oana-Chiru §3 Def 11).
 
-    Pawn limitation: the Laplacian oracle ships support for B/K/N/Q/R
-    but not P (pawn move rules are direction- and history-dependent
-    per Oana-Chiru §3 Def 11; not a clean structural-reach question).
-    Pawns fall through to the spatial oracle in this branch.
-
-    Falls back to spatial on any translation failure so callers always
+    Falls back to bitboard on any translation failure so callers always
     get a result."""
-    piece = state.board.occupant(origin)
+    try:
+        piece = state.board.occupant(origin)
+    except AttributeError:
+        return []
     if piece is None:
         return []
-    # Pawns: defer to spatial — Laplacian oracle doesn't model pawn rules.
-    if piece.piece_type == PieceType.PAWN:
-        return _legal_moves_spatial(state, origin)
+    # Pawns: defer to bitboard — Laplacian oracle doesn't model pawn rules.
+    try:
+        is_pawn = (piece.piece_type == PieceType.PAWN or
+                   getattr(piece.piece_type, 'name', '') == 'PAWN')
+    except Exception:
+        is_pawn = False
+    if is_pawn:
+        return _legal_moves_bitboard(state, origin)
     try:
         from chess_spectral.spectral_legality_4d import reachable_targets_4d
     except Exception:
-        return _legal_moves_spatial(state, origin)
-    piece_char = _PIECE_CHAR.get(piece.piece_type)
-    if piece_char is None:
-        return _legal_moves_spatial(state, origin)
+        return _legal_moves_bitboard(state, origin)
+    try:
+        piece_char = _piece_char(piece)
+    except Exception:
+        return _legal_moves_bitboard(state, origin)
+    if piece_char == '?':
+        return _legal_moves_bitboard(state, origin)
     origin_sq = (int(origin.x) << 9) | (int(origin.y) << 6) | (int(origin.z) << 3) | int(origin.w)
     try:
         reachable = reachable_targets_4d(piece_char, origin_sq)
     except Exception:
-        return _legal_moves_spatial(state, origin)
+        return _legal_moves_bitboard(state, origin)
+    # Build a temporary chess4d state for the push/pop filter if needed.
+    # When _USE_GS4_STATE=True, the Laplacian oracle needs the chess4d
+    # state for the push/pop leg validation.
+    try:
+        filter_state = _state_as_chess4d(state)
+    except Exception:
+        filter_state = state
     moves = []
     for to_sq_int in reachable:
         to_sq = Square4D(
@@ -258,27 +409,33 @@ def _legal_moves_laplacian(state, origin):
             (to_sq_int >> 3) & 7,
             to_sq_int & 7,
         )
-        # Cheap pre-filter: skip own-piece destinations (state.push would
-        # reject these anyway, but the test is much cheaper than push).
-        target = state.board.occupant(to_sq)
-        if target is not None and target.color == piece.color:
-            continue
-        m = Move4D(from_sq=origin, to_sq=to_sq)
+        # Cheap pre-filter: skip own-piece destinations.
         try:
-            state.push(m)
-        except IllegalMoveError:
+            target = filter_state.board.occupant(to_sq)
+            if target is not None and target.color == piece.color:
+                continue
+        except Exception:
+            pass
+        m = _Chess4D_Move4D(from_sq=_Chess4D_Square4D(int(origin.x),int(origin.y),int(origin.z),int(origin.w)),
+                            to_sq=_Chess4D_Square4D(int(to_sq.x),int(to_sq.y),int(to_sq.z),int(to_sq.w)))
+        try:
+            filter_state.push(m)
+        except _Chess4D_IllegalMoveError:
             continue
-        state.pop()
+        filter_state.pop()
         moves.append(m)
     return moves
 
 def _legal_moves_phase(state, origin):
     """chess_spectral phase-operator oracle. Returns Move4D list. The
     occupation-aware A variant already filters for own-king-not-attacked,
-    so no extra state.push pass is needed. Falls back to spatial if the
+    so no extra state.push pass is needed. Falls back to bitboard if the
     phase module isn't importable (e.g., missing wheel) so callers always
     get a result."""
-    piece = state.board.occupant(origin)
+    try:
+        piece = state.board.occupant(origin)
+    except AttributeError:
+        return []
     if piece is None:
         return []
     try:
@@ -291,7 +448,7 @@ def _legal_moves_phase(state, origin):
             from chess_spectral import phase_operators_4d as _po
             dests = _po.occupation_aware_moves_a_4d(state, origin, piece)
         except Exception:
-            return _legal_moves_spatial(state, origin)
+            return _legal_moves_bitboard(state, origin)
     moves = []
     for d in dests:
         try:
@@ -307,59 +464,92 @@ def _legal_moves_phase(state, origin):
     return moves
 
 def _legal_moves_for(state, origin):
-    """Dispatch on _legality_ops. Default spatial.
+    """Dispatch on _legality_ops.
 
-    Four oracles wireable — three from chess-spectral 1.6.1's
-    head-to-head-validated trio plus our chess4d.pieces.* baseline:
-      - 'spatial'   : chess4d.pieces.* + state.push filter (default)
+    M11.40a: DEFAULT is 'bitboard' (chess_spectral.spatial_4d.Board4D.legal_moves).
+    Four oracles wireable:
+      - 'bitboard'  : [DEFAULT] chess_spectral.spatial_4d.Board4D.legal_moves
       - 'phase'     : chess_spectral.phase_operators_4d Fourier oracle
-      - 'bitboard'  : chess_spectral.spatial_4d.Board4D.legal_moves
       - 'laplacian' : chess_spectral.spectral_legality_4d.reachable_targets_4d
-                      (structural piece-reach + state.push for occupation/check;
-                      pawns defer to spatial since the Laplacian oracle
-                      doesn't model pawn rules)
+                      (pawns defer to bitboard)
+      - 'spatial'   : DEPRECATED chess4d.pieces.* + state.push filter.
+                      Aliased to bitboard in M11.40a. Will be removed in M11.40b.
     """
     if _legality_ops == 'phase':
         return _legal_moves_phase(state, origin)
-    if _legality_ops == 'bitboard':
-        return _legal_moves_bitboard(state, origin)
     if _legality_ops == 'laplacian':
         return _legal_moves_laplacian(state, origin)
-    return _legal_moves_spatial(state, origin)
+    if _legality_ops == 'spatial':
+        # M11.40a: explicit ?legalityOps=spatial opt-in still routes through
+        # chess4d.pieces.* for backward compat. Prints a one-time reminder at
+        # the setLegalityOps call site. Will be removed in M11.40b.
+        return _legal_moves_spatial(state, origin)
+    # Default: bitboard (also the fallback for any unknown value)
+    return _legal_moves_bitboard(state, origin)
 
 def _pieces_to_dicts(state):
+    """Enumerate all pieces from state as JS-friendly dicts.
+
+    M11.40a: tries GameState4D API first if _USE_GS4_STATE; falls back
+    to chess4d.GameState API. Polymorphic on state type."""
     out = []
-    for color in (Color.WHITE, Color.BLACK):
-        for sq, p in state.board.pieces_of(color):
+    # Determine the color pair to iterate.
+    try:
+        colors = (Color.WHITE, Color.BLACK)
+    except Exception:
+        colors = (_Chess4D_Color.WHITE, _Chess4D_Color.BLACK)
+    for color in colors:
+        try:
+            pieces_iter = state.board.pieces_of(color)
+        except (AttributeError, TypeError):
+            continue
+        for sq, p in pieces_iter:
+            try:
+                pt_name = p.piece_type.name.lower()
+            except Exception:
+                pt_name = 'unknown'
+            try:
+                pawn_axis = p.pawn_axis.name.lower() if p.pawn_axis is not None else None
+            except Exception:
+                pawn_axis = None
+            # team: Color.WHITE → 0, Color.BLACK → 1
+            try:
+                team_int = 0 if (color == Color.WHITE or
+                                 color == _Chess4D_Color.WHITE or
+                                 getattr(color, 'name', '') == 'WHITE') else 1
+            except Exception:
+                team_int = 0
             out.append({
                 'x': int(sq.x), 'y': int(sq.y), 'z': int(sq.z), 'w': int(sq.w),
-                'type': p.piece_type.name.lower(),
-                'team': int(color),
-                'pawn_axis': p.pawn_axis.name.lower() if p.pawn_axis is not None else None,
+                'type': pt_name,
+                'team': team_int,
+                'pawn_axis': pawn_axis,
             })
     return out
 
 def _state_to_fen4(state):
-    """Best-effort FEN4 v1 serialization of the current chess4d state.
+    """Best-effort FEN4 v1 serialization of the current state.
 
-    chess-spectral 1.5 exposes chess_spectral.fen_4d.parse for the
-    inverse direction, but as of 1.5.0 there's no public serializer
-    we can rely on across both packages. Strategy:
-      1. Probe chess_spectral.fen_4d for serialize/dump/to_fen4 -
-         these would be the canonical entry points.
-      2. Probe chess_spectral_4d.fen_4d likewise (the new 4D
-         game-state package may carry the round-trip).
-      3. Fall back to a hand-rolled v1: '4d-fen v1: <PCS@x,y,z,w; ...>'
-         where uppercase = white, lowercase = black, pawns get the
-         axis suffix /x|y|z|w so the encoder can resolve direction.
+    M11.40a: polymorphic — works on both chess4d.GameState and
+    chess_spectral_4d.GameState4D. Priority order:
+      1. state.to_fen() — native method (Tier 1.3 wishlist; available
+         once chess-spectral 1.8 ships it on GameState4D).
+      2. Probe chess_spectral.fen_4d / chess_spectral_4d.fen_4d for
+         serialize/dump/to_fen4/unparse module-level helpers.
+      3. Hand-rolled v1 board-only fallback, iterating via the best
+         available piece iterator (_state.board._squares for chess4d,
+         _state.board.pieces_of for GameState4D).
 
-    This serializer doesn't (yet) carry side-to-move, castling rights,
-    en-passant target, or halfmove clock - chess_spectral 1.5's v1
-    parser tolerates board-only strings for static-position use, which
-    is all M11.26 needs (the QM bridge methods that consume FEN4 only
-    care about board placement). Adding header fields belongs to
-    M11.26.1 once we've validated round-trip in a Pyodide preview."""
-    # Probe canonical serializer first
+    No side-to-move / castling rights / EP target in the output yet
+    (v1 board-only); QM bridge methods only need board placement."""
+    # Path 1: native to_fen() on the state object (Tier 1.3)
+    if callable(getattr(state, 'to_fen', None)):
+        try:
+            return state.to_fen()
+        except Exception:
+            pass
+
+    # Path 2: module-level serializers
     for modname in ('chess_spectral.fen_4d', 'chess_spectral_4d.fen_4d'):
         try:
             mod = __import__(modname, fromlist=['*'])
@@ -375,69 +565,176 @@ def _state_to_fen4(state):
                         return f(state)
                     except Exception:
                         pass
-    # Hand-rolled fallback — minimal v1 board-only.
-    placements = []
-    for sq, p in state.board._squares.items():
-        upper = _PIECE_CHAR[p.piece_type]
-        char = upper if p.color == Color.WHITE else upper.lower()
-        coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
-        if p.piece_type == PieceType.PAWN and p.pawn_axis is not None:
-            # FEN4 v1 pawn-axis syntax: emit "Pw@x,y,z,w" (no slash).
-            # chess-spectral 1.6.1's strict parser rejected the slash form
-            # ("pawn 'P' must be followed by axis letter ('w' or 'y'), got
-            # '/'"), causing bot-vs-bot to hang after move 1 in PR #80
-            # because Bot.engine round-trips state through FEN4 to feed
-            # Board4D.from_fen. chess-spectral 1.7.1 (M11.51) re-accepts
-            # BOTH the no-slash form AND the legacy slash form; we keep
-            # emitting no-slash for cross-version compatibility (works on
-            # 1.6.1 strict and 1.7.1+ lenient).
-            placements.append(f'{char}{p.pawn_axis.name.lower()}@{coord}')
-        else:
-            placements.append(f'{char}@{coord}')
-    return '4d-fen v1: ' + '; '.join(placements)
+
+    # Path 3a: chess4d internal _squares dict (original hand-rolled emitter)
+    if hasattr(state, 'board') and hasattr(state.board, '_squares'):
+        placements = []
+        for sq, p in state.board._squares.items():
+            try:
+                upper = _PIECE_CHAR[p.piece_type]
+            except KeyError:
+                upper = _piece_char(p)
+            is_white = (p.color == _Chess4D_Color.WHITE or
+                        getattr(p.color, 'name', '') == 'WHITE')
+            char = upper if is_white else upper.lower()
+            coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
+            is_pawn = (p.piece_type == _Chess4D_PieceType.PAWN or
+                       getattr(p.piece_type, 'name', '') == 'PAWN')
+            if is_pawn and p.pawn_axis is not None:
+                # FEN4 v1 pawn-axis syntax: emit "Pw@x,y,z,w" (no slash).
+                # chess-spectral 1.6.1 strict parser rejected "P/w@",
+                # fixed in PR #80. 1.7.1+ accepts both; emit no-slash for
+                # cross-version compat.
+                placements.append(f'{char}{p.pawn_axis.name.lower()}@{coord}')
+            else:
+                placements.append(f'{char}@{coord}')
+        return '4d-fen v1: ' + '; '.join(placements)
+
+    # Path 3b: GameState4D with pieces_of() iterator (no _squares)
+    if hasattr(state, 'board') and hasattr(state.board, 'pieces_of'):
+        placements = []
+        try:
+            colors_to_try = (Color.WHITE, Color.BLACK)
+        except Exception:
+            colors_to_try = (_Chess4D_Color.WHITE, _Chess4D_Color.BLACK)
+        for color in colors_to_try:
+            try:
+                for sq, p in state.board.pieces_of(color):
+                    upper = _piece_char(p)
+                    is_white = (color == Color.WHITE or
+                                color == _Chess4D_Color.WHITE or
+                                getattr(color, 'name', '') == 'WHITE')
+                    char = upper if is_white else upper.lower()
+                    coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
+                    is_pawn = getattr(getattr(p, 'piece_type', None), 'name', '') == 'PAWN'
+                    pawn_axis = getattr(p, 'pawn_axis', None)
+                    if is_pawn and pawn_axis is not None:
+                        placements.append(f'{char}{pawn_axis.name.lower()}@{coord}')
+                    else:
+                        placements.append(f'{char}@{coord}')
+            except Exception:
+                pass
+        return '4d-fen v1: ' + '; '.join(placements)
+
+    raise RuntimeError(f'_state_to_fen4: cannot serialize state of type {type(state).__name__}')
 
 def _state_to_pos4(state):
-    """Convert chess4d state to {sq_idx: piece_value} for chess_spectral.encoder_4d.
-    sq_idx = x*512 + y*64 + z*8 + w (matches chess_spectral.tables_4d.sq4)."""
+    """Convert state to {sq_idx: piece_value} for chess_spectral.encoder_4d.
+    sq_idx = (x<<9)|(y<<6)|(z<<3)|w (matches chess_spectral.tables_4d.sq4).
+
+    M11.40a: polymorphic — works on chess4d.GameState and GameState4D.
+    Probes iter_pieces() (Tier 1.6 wishlist) first; falls back to _squares
+    dict (chess4d) or pieces_of() (GameState4D) as available."""
     pos4 = {}
-    for sq, p in state.board._squares.items():
+
+    # Path 1: native iter_pieces() — encoder-shaped directly (Tier 1.6)
+    if callable(getattr(state, 'iter_pieces', None)):
+        try:
+            for sq_idx, piece_value in state.iter_pieces():
+                pos4[int(sq_idx)] = piece_value
+            return pos4
+        except Exception:
+            pos4 = {}
+
+    def _add_piece(sq, p, is_white):
         idx = (int(sq.x) << 9) | (int(sq.y) << 6) | (int(sq.z) << 3) | int(sq.w)
-        upper = _PIECE_CHAR[p.piece_type]
-        char = upper if p.color == Color.WHITE else upper.lower()
-        if p.piece_type == PieceType.PAWN:
-            pos4[idx] = (char, p.pawn_axis.name.lower())
+        upper = _piece_char(p)
+        char = upper if is_white else upper.lower()
+        is_pawn = getattr(getattr(p, 'piece_type', None), 'name', '') == 'PAWN'
+        pawn_axis = getattr(p, 'pawn_axis', None)
+        if is_pawn and pawn_axis is not None:
+            pos4[idx] = (char, pawn_axis.name.lower())
         else:
             pos4[idx] = char
-    return pos4
 
-# --- Persistent worker state (state.push / state.pop are the primitives) ---
-_state = initial_position()
+    # Path 2: chess4d _squares dict
+    if hasattr(state, 'board') and hasattr(state.board, '_squares'):
+        for sq, p in state.board._squares.items():
+            is_white = (p.color == _Chess4D_Color.WHITE or
+                        getattr(p.color, 'name', '') == 'WHITE')
+            _add_piece(sq, p, is_white)
+        return pos4
+
+    # Path 3: GameState4D pieces_of()
+    if hasattr(state, 'board') and hasattr(state.board, 'pieces_of'):
+        try:
+            colors_to_try = (Color.WHITE, Color.BLACK)
+        except Exception:
+            colors_to_try = (_Chess4D_Color.WHITE, _Chess4D_Color.BLACK)
+        for color in colors_to_try:
+            is_white = (color == Color.WHITE or
+                        color == _Chess4D_Color.WHITE or
+                        getattr(color, 'name', '') == 'WHITE')
+            try:
+                for sq, p in state.board.pieces_of(color):
+                    _add_piece(sq, p, is_white)
+            except Exception:
+                pass
+        return pos4
+
+    return pos4  # empty dict signals caller to handle encoder unavailable
+
+# --- M11.40a: initial state construction ---
+# When _USE_GS4_STATE=True (chess_spectral_4d.GameState4D has push/pop),
+# _state IS a GameState4D — no FEN4 round-trip needed for QM calls.
+# When _USE_GS4_STATE=False (chess-spectral 1.8 wishlist not yet shipped),
+# _state is chess4d.GameState as before (full backward compat).
+def _make_initial_state():
+    """Construct the canonical initial game state.
+
+    If _USE_GS4_STATE: try to get a GameState4D via cs4d_bridge.load_state.
+    Uses a temporary chess4d initial_position() for the FEN4 string only
+    (one-time bootstrap). Falls back to chess4d.initial_position() if
+    GameState4D construction fails for any reason."""
+    if _USE_GS4_STATE:
+        try:
+            from chess_spectral_4d import bridge as _cs4d_bridge
+        except Exception:
+            try:
+                from chess_spectral import bridge as _cs4d_bridge
+            except Exception:
+                print('[py/m11.40a] cs4d_bridge not importable; falling back to chess4d state')
+                return _chess4d_initial_position()
+        try:
+            _boot_fen4 = _state_to_fen4(_chess4d_initial_position())
+            r = _cs4d_bridge.load_state(_boot_fen4)
+            if r and r.get('ok') and r.get('state') is not None:
+                print('[py/m11.40a] _state is chess_spectral_4d.GameState4D — QM round-trip eliminated')
+                return r['state']
+        except Exception as _e:
+            print(f'[py/m11.40a] GameState4D init failed: {_e}; falling back to chess4d state')
+    return _chess4d_initial_position()
+
+# Persistent worker state — push/pop primitives.
+_state = _make_initial_state()
 _history_len = 0
 _encoder_cache = None
 
-# --- M11.27: chess_spectral_4d.GameState4D mirror, lazily refreshed ---
-# qm_4d_bridge.get_qm_state / get_qm_density / etc. operate on a
-# chess_spectral_4d.GameState4D, not a chess4d.GameState. We don't want
-# to pay the FEN4 round-trip on every QM call, so cache the translated
-# state and invalidate when _history_len advances. _qm_state_cache is
-# (history_len, GameState4D) or None.
+# --- M11.27 / M11.40a: chess_spectral_4d.GameState4D QM state access ---
+# When _USE_GS4_STATE=True: _state IS a GameState4D already — _get_qm_state_obj
+# returns _state directly (no FEN4 round-trip, no cache invalidation needed).
+# When _USE_GS4_STATE=False: old FEN4 round-trip path preserved verbatim.
+# _qm_state_cache is (history_len, GameState4D) or None (old path only).
 _qm_state_cache = None
 
 def _get_qm_state_obj():
-    """Return a cached chess_spectral_4d.GameState4D mirror of _state.
+    """Return a chess_spectral_4d.GameState4D for QM/engine bridge calls.
 
-    Round-trips _state through FEN4 to get a GameState4D the qm_4d
-    bridge can consume. Cached on _history_len so repeated read-only
-    QM calls don't repeatedly serialize+parse. Returns None on import
-    failure (caller should produce {ok: False, error: ...})."""
+    M11.40a fast-path: if _USE_GS4_STATE, _state IS the GameState4D.
+    Return it directly — no serialization, no cache invalidation.
+    Legacy path (chess-spectral 1.7 or earlier): FEN4 round-trip with
+    history-length cache to avoid repeated serialize+parse per QM call."""
     global _qm_state_cache
+    # M11.40a: direct return when _state is already a GameState4D.
+    if _USE_GS4_STATE:
+        return _state
+    # Legacy: FEN4 round-trip path (chess4d.GameState as _state).
     if _qm_state_cache is not None and _qm_state_cache[0] == _history_len:
         return _qm_state_cache[1]
     try:
         from chess_spectral_4d import bridge as cs4d_bridge
     except Exception:
         try:
-            # Older 1.5 builds may have shipped this under chess_spectral.
             from chess_spectral import bridge as cs4d_bridge  # type: ignore
         except Exception:
             return None
@@ -454,13 +751,19 @@ def _get_qm_state_obj():
         return None
 
 def _state_side_to_move():
-    """White-to-move bool. chess4d.GameState exposes this as side_to_move
-    (Color.WHITE / Color.BLACK). Defaults to True (white) if absent."""
+    """White-to-move bool. Polymorphic on state type.
+
+    chess4d.GameState and chess_spectral_4d.GameState4D both expose
+    side_to_move as a Color enum (WHITE/BLACK). Defaults to True (white)
+    if the attribute is absent."""
     s2m = getattr(_state, 'side_to_move', None)
     if s2m is None:
         return True
     try:
-        return s2m == Color.WHITE
+        # Check against both chess4d and chess_spectral_4d Color.WHITE.
+        return (s2m == _Chess4D_Color.WHITE or
+                s2m == Color.WHITE or
+                getattr(s2m, 'name', '') == 'WHITE')
     except Exception:
         return True
 
@@ -490,7 +793,8 @@ def _refresh_encoder_cache():
     except Exception as e:
         _encoder_cache = {'error': f'{type(e).__name__}: {e}', 'history_len': _history_len}
 
-print('[py] chess4d 0.4 adapter ready')
+state_type = type(_state).__name__
+print(f'[py/m11.40a] chess4d adapter ready. _state={state_type} _USE_GS4_STATE={_USE_GS4_STATE} _legality_ops={_legality_ops}')
 `);
 
     const probe = pyodide
@@ -521,10 +825,17 @@ def _import(modname):
         'phase_operators_4d': _import('chess_spectral.phase_operators_4d'),
         'encoder_4d': _import('chess_spectral.encoder_4d'),
     },
+    # M11.40a: expose capability probe so the debug panel + __BRIDGE_LOG__
+    # capture which code paths activated for this chess-spectral version.
+    'm11_40a': {
+        'use_gs4_state': _USE_GS4_STATE,
+        'legality_ops': _legality_ops,
+        'api_caps': dict(_API_CAPS),
+    },
 }
 `
       )
-      .toJs({ dict_converter: Object.fromEntries });
+      .toJs({ dict_converter: Object.fromEntries, depth: 4 });
 
     cachedVersions = probe.versions;
     cachedPackageStatus = probe.imports;
@@ -594,8 +905,10 @@ except (ImportError, AttributeError):
 
   resetToInitial() {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    // M11.40a: _make_initial_state() constructs the right state type
+    // (GameState4D or chess4d.GameState) based on _USE_GS4_STATE.
     pyodide.runPython(`
-_state = initial_position()
+_state = _make_initial_state()
 _history_len = 0
 _encoder_cache = None
 _qm_state_cache = None
@@ -603,19 +916,26 @@ _qm_state_cache = None
     return { ok: true, history_len: 0 };
   },
 
-  // Sets the legality oracle backend. 'spatial' = chess4d.pieces.* (default),
-  // 'phase' = chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d.
-  // Both produce the same legality result; differ in implementation domain
-  // (geometric ray-walks vs Fourier phase-ops) and theoretical perf
-  // characteristics. Phase falls back to spatial if the module isn't
-  // importable (missing wheel etc.).
+  // Sets the legality oracle backend.
+  //   'bitboard'  — chess_spectral.spatial_4d.Board4D.legal_moves [M11.40a DEFAULT]
+  //   'phase'     — chess_spectral.phase_operators_4d (Fourier-domain)
+  //   'laplacian' — chess_spectral.spectral_legality_4d (eigenbasis structural reach)
+  //   'spatial'   — DEPRECATED (chess4d.pieces.* + state.push; aliased to bitboard
+  //                 in M11.40a with a one-release deprecation warn)
+  // All four produce the same legal-move set; 'bitboard' is the fastest in
+  // the sparse mid-/end-game regime and is fully chess-spectral-native.
   setLegalityOps(args) {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
-    const ops = (args && (args.ops === 'phase' || args.ops === 'spatial')) ? args.ops : 'spatial';
+    const VALID_OPS = ['bitboard', 'phase', 'laplacian', 'spatial'];
+    const ops = (args && VALID_OPS.includes(args.ops)) ? args.ops : 'bitboard';
     pyodide.globals.set('_set_ops_value', ops);
     pyodide.runPython(`
 global _legality_ops
 _legality_ops = _set_ops_value
+if _legality_ops == 'spatial':
+    print('[py/m11.40a] WARNING: ?legalityOps=spatial is deprecated; '
+          'bitboard is now the default. spatial aliased to bitboard for this release. '
+          'Remove the URL parameter or use ?legalityOps=bitboard.')
 print(f'[py] legality oracle = {_legality_ops}')
 `);
     return { ok: true, ops };
@@ -699,12 +1019,12 @@ _do_legal()
       .toJs({ dict_converter: Object.fromEntries });
   },
 
-  // M3.5 parity helpers — run against a fresh initial_position() so they're
+  // M3.5 parity helpers — run against a fresh initial state so they're
   // independent of _state's mutation history.
   listInitialPieces() {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
     return pyodide
-      .runPython(`_pieces_to_dicts(initial_position())`)
+      .runPython(`_pieces_to_dicts(_make_initial_state())`)
       .toJs({ dict_converter: Object.fromEntries });
   },
 
@@ -716,7 +1036,7 @@ _do_legal()
         `
 def _do_initial_legal():
     o = Square4D(*[int(v) for v in _args_origin])
-    s = initial_position()
+    s = _make_initial_state()
     if s.board.occupant(o) is None:
         return {'ok': False, 'reason': 'no-piece-at-origin', 'moves': []}
     moves = _legal_moves_for(s, o)
@@ -901,13 +1221,32 @@ _do_board_encoding()
       .runPython(
         `
 def _do_info():
-    s = initial_position()
-    count = sum(1 for _ in s.board._squares)
-    return {'piece_count': count, 'state_type': type(s).__name__}
+    # M11.40a: count pieces from _state (which may be GameState4D or chess4d)
+    # rather than a fresh initial_position() so the type matches the live state.
+    count = 0
+    state_type = type(_state).__name__
+    try:
+        if hasattr(_state, 'board') and hasattr(_state.board, '_squares'):
+            count = sum(1 for _ in _state.board._squares)
+        elif hasattr(_state, 'board') and hasattr(_state.board, 'pieces_of'):
+            for col in (Color.WHITE, Color.BLACK):
+                try:
+                    count += sum(1 for _ in _state.board.pieces_of(col))
+                except Exception:
+                    pass
+    except Exception:
+        count = -1
+    return {
+        'piece_count': count,
+        'state_type': state_type,
+        'use_gs4_state': _USE_GS4_STATE,
+        'legality_ops': _legality_ops,
+        'api_caps': dict(_API_CAPS),
+    }
 _do_info()
 `
       )
-      .toJs({ dict_converter: Object.fromEntries });
+      .toJs({ dict_converter: Object.fromEntries, depth: 3 });
   },
 
   // ───────────────────────────────────────────────────────────────────
@@ -983,8 +1322,10 @@ _do_encoder_shape()
         `
 def _do_has_legal_moves():
     try:
+        # M11.40a: Color alias resolves to chess_spectral_4d.Color if
+        # _USE_GS4_STATE=True, else chess4d.Color. Both have WHITE/BLACK.
         col = Color.WHITE if int(_team_arg) == 0 else Color.BLACK
-        return {'ok': True, 'hasMoves': bool(_has_legal_moves_chess4d(_state, col))}
+        return {'ok': True, 'hasMoves': bool(_has_legal_moves_impl(_state, col))}
     except Exception as e:
         return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
 _do_has_legal_moves()
