@@ -677,9 +677,9 @@
                         </label>
                         <input type="range" id="bot-pacing-slider" min="100" max="2000" step="50" value="1200"
                                aria-label="Bot visual pacing in milliseconds"
-                               title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. The page may briefly freeze during 'smart' bot deep search — that's a JS engine limitation; M13.4 (chess-spectral 1.6 engine) will fix it for good." />
+                               title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. NOTE: 'smart' strategy still freezes the page (JS-side iterative deepening on main thread). The new 'engine-*' strategies (cs1.6+) run in the Pyodide worker and DO NOT freeze the page — prefer those for any long-running bot match." />
                         <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
-                            Page may briefly freeze during smart-bot deep search. Yield-points keep the spinner moving and let the page repaint between depth iterations, but a single deep iteration still blocks the JS thread.
+                            'smart' strategy freezes the page during deep search (JS main thread). The 'engine-material', 'engine-spectral', and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches.
                         </p>
                     </div>
                     <!-- M14.6: eval-breakdown debug panel. Calls
