@@ -682,6 +682,23 @@
                             'smart' strategy freezes the page during deep search (JS main thread). The 'engine-material', 'engine-spectral', and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches.
                         </p>
                     </div>
+                    <!-- M13.4.2: engine think-time slider. Caps how long
+                         chess-spectral 1.6.1's alpha-beta search runs per
+                         move before returning the best move from the
+                         deepest completed iteration. Only affects engine-*
+                         bots; JS bots are millisecond-scale anyway. -->
+                    <div class="spectral-control" style="flex-direction: column; align-items: stretch; margin-top: 6px;">
+                        <label for="engine-thinktime-slider" style="display: flex; justify-content: space-between;">
+                            <span>Engine think time:</span>
+                            <span id="engine-thinktime-readout">4000&nbsp;ms</span>
+                        </label>
+                        <input type="range" id="engine-thinktime-slider" min="1000" max="60000" step="500" value="4000"
+                               aria-label="Engine think time in milliseconds (per bot move)"
+                               title="Time budget for chess-spectral 1.6.1's alpha-beta search per engine-* bot move. Longer = engine searches deeper / finds better moves at sparse positions. Shorter = bot moves faster but falls back to v0 quickly at dense positions. Doesn't help at the dense 28-king starting position (pure-Python 4D move-gen takes ~250s per upstream caveat) — but at sparse mid-/end-game positions, dialing this up to 15-30s lets the engine find depth 2-3 moves." />
+                        <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
+                            Engine bots use this budget per move. Default 4s is a starting-position-friendly compromise. Crank up to 15-30s for thoughtful engine play once material thins.
+                        </p>
+                    </div>
                     <!-- M14.6: eval-breakdown debug panel. Calls
                          bridge.evaluatePosition({evaluator}) each move and
                          renders per-component contribution bars. Most useful
@@ -2177,6 +2194,43 @@
           slider.addEventListener('change', function () {
             applyPacing();
             try { localStorage.setItem(PK, slider.value); } catch (_) {}
+          });
+        }
+
+        // M13.4.2 — engine think-time slider. Writes to RUNTIME_OVERRIDES.
+        // BOT_THINK_TIME_MS so Bot._engineGetBestMove reads the runtime
+        // value as the timeBudgetMs passed to bridge.getBestMove.
+        // localStorage persists across reloads; URL flag overrides.
+        var ttSlider  = document.getElementById('engine-thinktime-slider');
+        var ttReadout = document.getElementById('engine-thinktime-readout');
+        if (ttSlider && ttReadout && window.RUNTIME_OVERRIDES) {
+          var TTK = 'chess4d-oc.bot-pacing.engine-thinktime-ms';
+          try {
+            // URL flag wins on first load (but doesn't persist).
+            var u = new URLSearchParams(location.search).get('engineThinkTimeMs');
+            if (u != null && Number.isFinite(parseInt(u, 10))) {
+              ttSlider.value = String(Math.max(1000, Math.min(60000, parseInt(u, 10))));
+            } else {
+              var savedTt = parseInt(localStorage.getItem(TTK), 10);
+              if (Number.isFinite(savedTt)) {
+                ttSlider.value = String(Math.max(1000, Math.min(60000, savedTt)));
+              }
+            }
+          } catch (_) {}
+          function applyThinkTime() {
+            var v = parseInt(ttSlider.value, 10);
+            if (!Number.isFinite(v)) v = 4000;
+            window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS = v;
+            // Format friendly: under 10s show as "4000 ms" / "9500 ms";
+            // 10s+ show as "15.0 s" / "30.0 s" so the slider feels honest
+            // about the long-budget end of the range.
+            ttReadout.textContent = v < 10000 ? v + ' ms' : (v / 1000).toFixed(1) + ' s';
+          }
+          applyThinkTime();
+          ttSlider.addEventListener('input', applyThinkTime);
+          ttSlider.addEventListener('change', function () {
+            applyThinkTime();
+            try { localStorage.setItem(TTK, ttSlider.value); } catch (_) {}
           });
         }
       });

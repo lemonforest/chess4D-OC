@@ -85,5 +85,13 @@
   window.RUNTIME_OVERRIDES = window.RUNTIME_OVERRIDES || {
     // Set by the bot-pacing slider in index.html. null = use TIMING default.
     BOT_VISUAL_GATE_MS: null,
+    // M13.4.2 — Set by the engine think-time slider. The chess-spectral
+    // 1.6.1 search.SearchOptions.time_budget_ms parameter caps how long
+    // the engine alpha-beta search runs before returning the deepest
+    // completed iteration. Default 4000ms (in Bot._engineGetBestMove).
+    // null = use that default; UI slider lets users tune from 1000 to
+    // 60000ms. Long budgets help in mid/end-game positions; useful to
+    // crank up to find deeper engine moves at sparse positions.
+    BOT_THINK_TIME_MS: null,
   };
 })();

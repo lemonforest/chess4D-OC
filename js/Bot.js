@@ -976,11 +976,18 @@ Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
         console.warn('[m13.4/engine] bridge.getBestMove unavailable; falling back to v0');
         return Bot.getBestMove(gameBoard, team);
     }
+    // M13.4.2 — read the engine think-time override (set by the slider
+    // in index.html). Falls through to the 4000ms default if no slider
+    // value has been set this session.
+    const thinkTimeOverride = (window.RUNTIME_OVERRIDES &&
+        window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS != null)
+        ? window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS
+        : 4000;
     try {
         const res = await window.SpectralBridge.getBestMove({
             evaluator: evaluator,
             maxDepth: 3,
-            timeBudgetMs: 4000,
+            timeBudgetMs: thinkTimeOverride,
         });
         if (!res || !res.ok || !res.move) {
             // Engine couldn't find a move in budget. At the 28-king
