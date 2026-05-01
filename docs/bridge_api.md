@@ -103,6 +103,13 @@ All methods return `Promise`s. The bridge serializes mutations through `applyCha
 
 **Notably NOT yet using `bridge.legalMoves` on the gameplay path** — that's the M4b.1 cutover work. User-click flow currently uses `Piece.getPossibleMoves` (JS legality classes).
 
+### M11.40a legality-oracle changes (2026-05-01)
+
+- **Default `?legalityOps` changed from `spatial` to `bitboard`**. `bitboard` = `chess_spectral.spatial_4d.Board4D.legal_moves` — fully chess-spectral-native, parity-verified against all other oracles. Sets the stage for dropping `python-chess4d-oana-chiru`.
+- **`?legalityOps=spatial` is deprecated.** `setLegalityOps` now accepts all 4 values properly (`bitboard`, `phase`, `laplacian`, `spatial`). Setting `spatial` logs a one-time deprecation warn and still routes through `chess4d.pieces.*` for one-release backward compat.
+- **`getInitialPositionInfo` returns M11.40a fields**: `use_gs4_state` (bool — True once chess-spectral 1.8 ships GameState4D push/pop), `legality_ops` (active oracle name), `api_caps` (dict of probed capabilities).
+- **Capability probe at boot**: `_API_CAPS` dict logged at worker startup, also embedded in the `init` response's `m11_40a` field. Shows which GameState4D capabilities are present for the installed chess-spectral version.
+
 ---
 
 ## Debugging surfaces (M13.7)
