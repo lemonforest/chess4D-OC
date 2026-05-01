@@ -53,6 +53,66 @@
   const pending = new Map();
   let nextId = 1;
 
+  // ───────────────────────────────────────────────────────────────
+  // M13.7: bridge call telemetry — single chokepoint instrumentation.
+  //
+  // Every bridge.<method> call funnels through call() below; the wrapper
+  // records a structured entry to a ring buffer and dispatches CustomEvents
+  // on document so the UI (e.g. think-budget progress indicator) can
+  // subscribe without poking bridge internals.
+  //
+  // Why we need this: the bot loop saw silent stalls around move 3 in
+  // qm-density-tint-on bot-vs-bot games. Errors inside getQmDensity /
+  // applyMove were rejecting promises that nothing observed, so the loop
+  // just stopped. This wrapper guarantees:
+  //   1. Every reject prints `[bridge-call-failed]` with method, args, ms,
+  //      error.name, error.message, error.stack — easy to grep in CI logs
+  //   2. window.__BRIDGE_LOG__ keeps the last 100 calls (with success bit
+  //      and duration) so post-mortems can inspect what happened across
+  //      both threads
+  //   3. A bridge:call:start / bridge:call:end CustomEvent pair lets the
+  //      think-budget UI track getBestMove without coupling to Bot.js
+  //
+  // Cost: one Date.now()+push per call, one CustomEvent dispatch. Sub-µs;
+  // negligible against any real bridge call (smallest is ~1ms RPC roundtrip).
+  const BRIDGE_LOG_MAX = 100;
+  const bridgeLog = [];
+  if (typeof window !== 'undefined') window.__BRIDGE_LOG__ = bridgeLog;
+
+  function _summarizeArgs(args) {
+    // Don't log entire 90112-element Float32Arrays in the ring buffer.
+    try {
+      return args.map((a) => {
+        if (a && typeof a === 'object') {
+          if (a.constructor && a.constructor.name &&
+              a.constructor.name.endsWith('Array')) {
+            return `<${a.constructor.name}(${a.length})>`;
+          }
+          // Trim deep objects to a flat key list.
+          const keys = Object.keys(a);
+          if (keys.length > 5) return `{${keys.length} keys}`;
+        }
+        return a;
+      });
+    } catch (_) {
+      return ['<unsummarizable>'];
+    }
+  }
+
+  function _recordCall(entry) {
+    bridgeLog.push(entry);
+    if (bridgeLog.length > BRIDGE_LOG_MAX) {
+      bridgeLog.splice(0, bridgeLog.length - BRIDGE_LOG_MAX);
+    }
+  }
+
+  function _emitEvent(name, detail) {
+    if (typeof document === 'undefined' || typeof CustomEvent === 'undefined') return;
+    try {
+      document.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch (_) { /* dispatch failure is non-fatal */ }
+  }
+
   worker.addEventListener('message', (event) => {
     const data = event.data || {};
     const { id, ok, result, error } = data;
@@ -74,18 +134,108 @@
 
   worker.addEventListener('error', (event) => {
     console.error('[SpectralBridge] worker error:', event.message || event);
+    _recordCall({
+      id: 0, method: '<worker-error>', args: [],
+      t0: Date.now(), durationMs: 0, ok: false,
+      errorName: 'WorkerError',
+      errorMessage: event.message || String(event),
+    });
+    _emitEvent('bridge:worker:error', {
+      message: event.message || String(event),
+    });
   });
 
+  // Track in-flight calls so the UI can show "engine is thinking" etc.
+  const inFlight = new Map();
+  if (typeof window !== 'undefined') window.__BRIDGE_INFLIGHT__ = inFlight;
+
   function call(method, ...args) {
+    const id = nextId++;
+    const idStr = String(id);
+    const t0 = Date.now();
+    const argsSummary = _summarizeArgs(args);
+    const flightEntry = { id, method, t0, args: argsSummary };
+    inFlight.set(id, flightEntry);
+    _emitEvent('bridge:call:start', { ...flightEntry });
+
     return new Promise((resolve, reject) => {
-      const id = String(nextId++);
-      pending.set(id, { resolve, reject });
+      pending.set(idStr, {
+        resolve: (v) => {
+          const dt = Date.now() - t0;
+          inFlight.delete(id);
+          _recordCall({
+            id, method, args: argsSummary, t0, durationMs: dt, ok: true,
+          });
+          _emitEvent('bridge:call:end', {
+            id, method, durationMs: dt, ok: true,
+          });
+          resolve(v);
+        },
+        reject: (err) => {
+          const dt = Date.now() - t0;
+          inFlight.delete(id);
+          const errName = (err && err.name) || 'Error';
+          const errMsg = (err && err.message) || String(err);
+          _recordCall({
+            id, method, args: argsSummary, t0, durationMs: dt, ok: false,
+            errorName: errName, errorMessage: errMsg,
+          });
+          // Loud, greppable, single-line error so CI logs can scan for the tag.
+          console.error(
+            `[bridge-call-failed] method=${method} ms=${dt} err=${errName}: ${errMsg}`,
+            err
+          );
+          _emitEvent('bridge:call:end', {
+            id, method, durationMs: dt, ok: false,
+            errorName: errName, errorMessage: errMsg,
+          });
+          reject(err);
+        },
+      });
       try {
-        worker.postMessage({ id, method, args });
+        worker.postMessage({ id: idStr, method, args });
       } catch (err) {
-        pending.delete(id);
+        pending.delete(idStr);
+        inFlight.delete(id);
+        const dt = Date.now() - t0;
+        _recordCall({
+          id, method, args: argsSummary, t0, durationMs: dt, ok: false,
+          errorName: 'PostMessageError',
+          errorMessage: (err && err.message) || String(err),
+        });
+        console.error(
+          `[bridge-call-failed] method=${method} ms=${dt} err=PostMessageError: ${err}`,
+          err
+        );
+        _emitEvent('bridge:call:end', {
+          id, method, durationMs: dt, ok: false,
+          errorName: 'PostMessageError',
+          errorMessage: (err && err.message) || String(err),
+        });
         reject(err);
       }
+    });
+  }
+
+  // Global safety net — anything that escapes the bridge wrapper or
+  // a downstream .then() with no .catch() still gets logged to the
+  // ring buffer so we have a forensic trail. Bot.js was the canonical
+  // offender (move-3 stall); the bot loop now has explicit .catch(),
+  // but this listener catches any future regression.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event.reason;
+      const errName = (reason && reason.name) || 'UnhandledRejection';
+      const errMsg = (reason && reason.message) || String(reason);
+      _recordCall({
+        id: 0, method: '<unhandled-rejection>', args: [],
+        t0: Date.now(), durationMs: 0, ok: false,
+        errorName: errName, errorMessage: errMsg,
+      });
+      console.error(
+        `[bridge-call-failed] method=<unhandled-rejection> err=${errName}: ${errMsg}`,
+        reason
+      );
     });
   }
 

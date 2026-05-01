@@ -2621,7 +2621,15 @@ function scheduleBotMove() {
     if (shouldBotMove && Bot) {
         // Schedule bot move after a short delay (to allow animation to complete)
         botMoveInterval = setTimeout(() => {
-            // Bot.makeMove now returns a Promise and includes visual feedback
+            // Bot.makeMove now returns a Promise and includes visual feedback.
+            //
+            // M13.7 — explicit .catch(). Pre-M13.7 this had no error handler;
+            // any rejection from a bridge call inside makeMove (e.g., a
+            // worker-side exception during getQmDensity refresh after move 3)
+            // would silently terminate the bot loop and the user saw a
+            // "frozen" bot-vs-bot game. The .catch below logs with a
+            // greppable tag and re-arms scheduleBotMove() so the loop
+            // self-heals from transient bridge faults instead of stalling.
             Bot.makeMove(gameBoard, moveManager, currentTeam).then((success) => {
                 if (success) {
                     // Bot move completed, will check again after move completes
@@ -2632,6 +2640,34 @@ function scheduleBotMove() {
                         checkWinCondition();
                     }
                 }
+            }).catch((err) => {
+                // Loud, greppable log so CI / DevTools / __BRIDGE_LOG__ all
+                // surface the failure. The bridge-level wrapper already logs
+                // the underlying [bridge-call-failed]; this records that the
+                // failure escaped into Bot.makeMove's outer scope.
+                console.error(
+                    '[bot-loop-error] Bot.makeMove rejected for team ' +
+                    currentTeam + ': ' + ((err && err.message) || err),
+                    err
+                );
+                // Don't deadlock the loop: re-arm a future move attempt.
+                // If the bridge is in a permanently bad state, the next
+                // attempt will fail too and log again — but that's still
+                // better than a silent stall. If the rejection was
+                // a transient (e.g., worker hiccup), the next attempt
+                // succeeds and the game keeps going.
+                if (botMoveInterval) {
+                    clearTimeout(botMoveInterval);
+                    botMoveInterval = null;
+                }
+                setTimeout(() => {
+                    // Re-check mode in case the user clicked Two Players
+                    // during the rejection. scheduleBotMove() itself
+                    // gates on currentGameMode so this is safe.
+                    if (typeof scheduleBotMove === 'function') {
+                        scheduleBotMove();
+                    }
+                }, 2000); // 2s back-off before retry
             });
         }, 1500); // 1.5 second delay for visual effect
     }
