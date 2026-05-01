@@ -47,12 +47,33 @@
   let _initRequested = false;
   let _lastOrigin = null;
 
-  const PIECE_FNS = {
-    rook:   (x, y, z, w) => window.PhaseOps4D && window.PhaseOps4D.rook(x, y, z, w),
-    bishop: (x, y, z, w) => window.PhaseOps4D && window.PhaseOps4D.bishop(x, y, z, w),
-    queen:  (x, y, z, w) => window.PhaseOps4D && window.PhaseOps4D.queen(x, y, z, w),
-    king:   (x, y, z, w) => window.PhaseOps4D && window.PhaseOps4D.king(x, y, z, w),
-    knight: (x, y, z, w) => window.PhaseOps4D && window.PhaseOps4D.knight(x, y, z, w),
+  // CodeQL note: previous PIECE_FNS dictionary indexed by piece-type
+  // string would flag js/unvalidated-dynamic-method-call (alerts #30-33,
+  // HIGH security-severity) because static analysis traces the index
+  // back to URL-flag input even though the change handlers (lines below)
+  // validate against the same dictionary keys. The fix routes every
+  // dispatch through an explicit switch that names each phase-op call
+  // site individually — analyzer can see all 5 calls go to known fns
+  // on window.PhaseOps4D, no unvalidated lookup remains.
+  //
+  // Behavior unchanged: same 5 piece types, same fallback to [] when
+  // PhaseOps4D not loaded yet, same defensive `&&` chain.
+  function _phaseOp(piece, x, y, z, w) {
+    if (typeof window === 'undefined' || !window.PhaseOps4D) return [];
+    switch (piece) {
+      case 'rook':   return window.PhaseOps4D.rook(x, y, z, w);
+      case 'bishop': return window.PhaseOps4D.bishop(x, y, z, w);
+      case 'queen':  return window.PhaseOps4D.queen(x, y, z, w);
+      case 'king':   return window.PhaseOps4D.king(x, y, z, w);
+      case 'knight': return window.PhaseOps4D.knight(x, y, z, w);
+      default:       return [];
+    }
+  }
+  // Allow-list kept for setPiecePair / URL-flag validation. Same 5
+  // entries as the legacy PIECE_FNS dictionary; the value side just
+  // becomes a sentinel `true` since dispatch is now via _phaseOp's switch.
+  const VALID_PIECES = {
+    rook: true, bishop: true, queen: true, king: true, knight: true,
   };
 
   // Pre-allocated per-cell base-position cache (same pattern as other
@@ -121,23 +142,25 @@
 
   // Compute [P_A, P_B](origin). Returns array of cell indices in the
   // symmetric difference. Coordinates and lookups are integer-keyed for
-  // O(1) set ops.
-  function computeCommutator(originX, originY, originZ, originW, fnA, fnB) {
-    const aSet = fnA(originX, originY, originZ, originW); // [[x,y,z,w], ...]
-    const bSet = fnB(originX, originY, originZ, originW);
+  // O(1) set ops. Takes piece-type STRINGS (validated upstream via
+  // VALID_PIECES); dispatch through _phaseOp's switch keeps CodeQL
+  // happy on js/unvalidated-dynamic-method-call.
+  function computeCommutator(originX, originY, originZ, originW, pieceA, pieceB) {
+    const aSet = _phaseOp(pieceA, originX, originY, originZ, originW); // [[x,y,z,w], ...]
+    const bSet = _phaseOp(pieceB, originX, originY, originZ, originW);
     function packCell([x, y, z, w]) {
       return (x << 9) | (y << 6) | (z << 3) | w;
     }
     // (A ∘ B)(o) = ⋃_{c ∈ B(o)} A(c)
     const ABset = new Set();
     for (const c of bSet) {
-      const dests = fnA(c[0], c[1], c[2], c[3]);
+      const dests = _phaseOp(pieceA, c[0], c[1], c[2], c[3]);
       for (const d of dests) ABset.add(packCell(d));
     }
     // (B ∘ A)(o) = ⋃_{c ∈ A(o)} B(c)
     const BAset = new Set();
     for (const c of aSet) {
-      const dests = fnB(c[0], c[1], c[2], c[3]);
+      const dests = _phaseOp(pieceB, c[0], c[1], c[2], c[3]);
       for (const d of dests) BAset.add(packCell(d));
     }
     // Symmetric difference: in exactly one of ABset / BAset.
@@ -154,16 +177,14 @@
       console.warn('[m12/commutator] PhaseOps4D not loaded yet');
       return;
     }
-    const fnA = PIECE_FNS[pieceA];
-    const fnB = PIECE_FNS[pieceB];
-    if (!fnA || !fnB) {
+    if (!VALID_PIECES[pieceA] || !VALID_PIECES[pieceB]) {
       console.warn('[m12/commutator] unknown piece type:', pieceA, pieceB);
       return;
     }
     const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
     const cells = computeCommutator(
       _lastOrigin.x, _lastOrigin.y, _lastOrigin.z, _lastOrigin.w,
-      fnA, fnB
+      pieceA, pieceB
     );
     // Write up to 4096 instances; compact slots to the active count.
     const maxCells = Math.min(cells.length, 4096);
@@ -203,8 +224,8 @@
         }
         const pa = params.get('commutatorA');
         const pb = params.get('commutatorB');
-        if (pa && PIECE_FNS[pa]) pieceA = pa;
-        if (pb && PIECE_FNS[pb]) pieceB = pb;
+        if (pa && VALID_PIECES[pa]) pieceA = pa;
+        if (pb && VALID_PIECES[pb]) pieceB = pb;
       } catch (_) { /* not in browser */ }
     },
     setEnabled(en) {
@@ -216,8 +237,8 @@
     },
     setPiecePair(a, b) {
       let dirty = false;
-      if (a && PIECE_FNS[a] && a !== pieceA) { pieceA = a; dirty = true; }
-      if (b && PIECE_FNS[b] && b !== pieceB) { pieceB = b; dirty = true; }
+      if (a && VALID_PIECES[a] && a !== pieceA) { pieceA = a; dirty = true; }
+      if (b && VALID_PIECES[b] && b !== pieceB) { pieceB = b; dirty = true; }
       if (dirty && enabled) refresh();
     },
     /** M11.3.5 stack-scale hook — keep markers aligned with boards. */
