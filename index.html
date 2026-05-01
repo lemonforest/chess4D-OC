@@ -76,6 +76,7 @@
         'js/spectral_pv.js',
         'js/spectral_eval_breakdown.js',
         'js/spectral_measure_panel.js',
+        'js/spectral_axial_lines.js',
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
         'js/phase_ops_4d.js',
@@ -1042,6 +1043,29 @@
                         <input type="range" id="stack-height-slider" min="20" max="150" value="100" class="slider">
                         <span class="axis-value" id="stack-height-value">100%</span>
                     </div>
+                    <!-- M14.7: axial guide lines through the selected piece.
+                         Four colored tubes (x=red, y=green, z=blue, w=yellow)
+                         pass through the focal cell along each lattice axis,
+                         drawing the eye to where what's happening in 4D. -->
+                    <div class="axis-control"
+                         title="When a piece is selected (player click or bot's chosen move), draw four colored tubes through it along the x/y/z/w lattice axes. Helps trace the 4D structure of the position around the focal piece.">
+                        <label>
+                            <input type="checkbox" id="axial-lines-toggle">
+                            Axial lines through selected piece
+                        </label>
+                    </div>
+                    <div class="axis-control"
+                         title="Opacity of axial guide lines (0 = invisible, 100 = solid).">
+                        <label>Axial line opacity</label>
+                        <input type="range" id="axial-lines-opacity" min="0" max="100" value="65" class="slider">
+                        <span class="axis-value" id="axial-lines-opacity-value">65%</span>
+                    </div>
+                    <div class="axis-control"
+                         title="Thickness (radius) of axial guide tubes in world units. Below 0.5 reads as thin lines; above 3 reads as fat tubes.">
+                        <label>Axial line thickness</label>
+                        <input type="range" id="axial-lines-thickness" min="2" max="50" value="15" class="slider">
+                        <span class="axis-value" id="axial-lines-thickness-value">1.5</span>
+                    </div>
                 </div>
             </section>
 
@@ -1888,6 +1912,100 @@
           apply();
           try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
         });
+      });
+    </script>
+
+    <!-- M14.7: axial guide lines toggle + opacity + thickness sliders.
+         URL flags: ?axialLines=1, ?axialOpacity=N (0..100), ?axialThickness=N (raw).
+         localStorage: chess4d-oc.axial-lines.{enabled,opacity,thickness}. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        if (!window.SpectralAxialLines) return;
+
+        var box   = document.getElementById('axial-lines-toggle');
+        var oSld  = document.getElementById('axial-lines-opacity');
+        var oVal  = document.getElementById('axial-lines-opacity-value');
+        var tSld  = document.getElementById('axial-lines-thickness');
+        var tVal  = document.getElementById('axial-lines-thickness-value');
+        var KEY_ON  = 'chess4d-oc.axial-lines.enabled';
+        var KEY_OP  = 'chess4d-oc.axial-lines.opacity';     // 0..100
+        var KEY_TH  = 'chess4d-oc.axial-lines.thickness';   // 2..50 (raw slider)
+
+        // Slider value → world-radius (TubeGeometry) — slider is 2..50,
+        // mapping to 0.2..5.0 world units. Linear /10.
+        function thicknessFromSlider(v) { return Math.max(0.1, (v | 0) / 10); }
+
+        // Toggle
+        if (box) {
+          var initial = null;
+          try {
+            var u = new URLSearchParams(location.search).get('axialLines');
+            if (u === '1' || u === 'on') initial = true;
+            if (initial === null) {
+              var v = localStorage.getItem(KEY_ON);
+              if (v === '1') initial = true; else if (v === '0') initial = false;
+            }
+          } catch (_) {}
+          if (initial !== null) box.checked = initial;
+          function applyBox() {
+            window.SpectralAxialLines.setEnabled(box.checked);
+          }
+          applyBox();
+          box.addEventListener('change', function () {
+            applyBox();
+            try { localStorage.setItem(KEY_ON, box.checked ? '1' : '0'); } catch (_) {}
+          });
+        }
+
+        // Opacity slider
+        if (oSld) {
+          var initOp = null;
+          try {
+            var uo = new URLSearchParams(location.search).get('axialOpacity');
+            if (uo != null && Number.isFinite(parseInt(uo, 10))) initOp = parseInt(uo, 10);
+            if (initOp === null) {
+              var vo = parseInt(localStorage.getItem(KEY_OP) || '', 10);
+              if (Number.isFinite(vo)) initOp = vo;
+            }
+          } catch (_) {}
+          if (initOp !== null) oSld.value = String(Math.max(0, Math.min(100, initOp)));
+          function applyOp() {
+            var n = parseInt(oSld.value, 10) || 0;
+            window.SpectralAxialLines.setOpacity(n / 100);
+            if (oVal) oVal.textContent = n + '%';
+          }
+          applyOp();
+          oSld.addEventListener('input', applyOp);
+          oSld.addEventListener('change', function () {
+            applyOp();
+            try { localStorage.setItem(KEY_OP, oSld.value); } catch (_) {}
+          });
+        }
+
+        // Thickness slider
+        if (tSld) {
+          var initTh = null;
+          try {
+            var ut = new URLSearchParams(location.search).get('axialThickness');
+            if (ut != null && Number.isFinite(parseInt(ut, 10))) initTh = parseInt(ut, 10);
+            if (initTh === null) {
+              var vt = parseInt(localStorage.getItem(KEY_TH) || '', 10);
+              if (Number.isFinite(vt)) initTh = vt;
+            }
+          } catch (_) {}
+          if (initTh !== null) tSld.value = String(Math.max(2, Math.min(50, initTh)));
+          function applyTh() {
+            var r = thicknessFromSlider(tSld.value);
+            window.SpectralAxialLines.setThickness(r);
+            if (tVal) tVal.textContent = r.toFixed(1);
+          }
+          applyTh();
+          tSld.addEventListener('input', applyTh);
+          tSld.addEventListener('change', function () {
+            applyTh();
+            try { localStorage.setItem(KEY_TH, tSld.value); } catch (_) {}
+          });
+        }
       });
     </script>
 

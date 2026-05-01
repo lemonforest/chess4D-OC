@@ -1101,6 +1101,12 @@ function initializeGame() {
                         try { window.SpectralPV.init(scene, gameBoard); }
                         catch (err) { console.warn('[m14.5/pv] init error:', err); }
                     }
+                    // M14.7 — axial guide lines through the focal piece.
+                    // Hooked into selectPiece/deselectPiece + Bot engine path.
+                    if (typeof window !== 'undefined' && window.SpectralAxialLines) {
+                        try { window.SpectralAxialLines.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m14.7/axial] init error:', err); }
+                    }
                     // M11.3.1 — nested isosurface shells (Mathematica-style).
                     if (typeof window !== 'undefined' && window.SpectralIsosurfaces) {
                         try { window.SpectralIsosurfaces.init(scene, gameBoard); }
@@ -2180,7 +2186,7 @@ async function selectPiece(mesh) {
     const worldPos = mesh.position;
     const boardCoords = gameBoard.graphics.worldCoordinates(worldPos);
     const piece = gameBoard.pieces[boardCoords.x][boardCoords.y][boardCoords.z][boardCoords.w];
-    
+
     if (!piece || !piece.type) {
         // Empty square clicked, deselect
         if (selectionSystem.selectedPiece) {
@@ -2190,6 +2196,10 @@ async function selectPiece(mesh) {
             gameState.selectedPieceData = null;
             gameState.possibleMoves = null;
             gameBoard.graphics.hidePossibleMoves();
+            // M14.7: clear axial lines when nothing's selected.
+            if (window.SpectralAxialLines && typeof window.SpectralAxialLines.clear === 'function') {
+                window.SpectralAxialLines.clear();
+            }
         }
         return;
     }
@@ -2234,6 +2244,14 @@ async function selectPiece(mesh) {
         typeof window.SpectralCommutator.refreshFor === 'function') {
         try { window.SpectralCommutator.refreshFor(boardCoords); }
         catch (err) { console.warn('[m12/commutator] refreshFor error:', err); }
+    }
+
+    // M14.7: focus the axial guide lines on the selected piece. No-op when
+    // the toggle is off (the module gates rebuilds on _enabled internally).
+    if (typeof window !== 'undefined' && window.SpectralAxialLines &&
+        typeof window.SpectralAxialLines.setFocus === 'function') {
+        try { window.SpectralAxialLines.setFocus(boardCoords); }
+        catch (err) { console.warn('[m14.7/axial] setFocus error:', err); }
     }
     
     // Check for checkmate/stalemate after filtering moves
@@ -2284,12 +2302,18 @@ function deselectPiece() {
     if (selectionSystem.selectedPiece) {
         selectionSystem.unhighlight(selectionSystem.selectedPiece);
     }
-    
+
     // Clear selection state
     selectionSystem.selectedPiece = null;
     gameState.selectedPiece = null;
     gameState.selectedPieceData = null;
     gameState.possibleMoves = null;
+
+    // M14.7: clear axial guide lines whenever selection is dropped.
+    if (typeof window !== 'undefined' && window.SpectralAxialLines &&
+        typeof window.SpectralAxialLines.clear === 'function') {
+        window.SpectralAxialLines.clear();
+    }
     
     // Hide possible moves visualization
     if (gameBoard && gameBoard.graphics) {
