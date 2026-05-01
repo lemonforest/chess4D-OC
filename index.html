@@ -2414,7 +2414,7 @@
             setCheck('board-commutator', false);
           },
           cloud: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', false);
             setCheck('board-topology', false);
             setCheck('board-tint', false);
@@ -2424,7 +2424,7 @@
             setCheck('hide-boards', false);
           },
           topology: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', true);   // auto-on by topology too, but explicit
             setCheck('board-topology', true);
             setCheck('board-tint', false);
@@ -2434,7 +2434,7 @@
             setCheck('hide-boards', false);
           },
           tint: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', false);
             setCheck('board-topology', false);
             setCheck('board-tint', true);
@@ -2444,7 +2444,7 @@
             setCheck('hide-boards', false);
           },
           shells: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', false);
             setCheck('board-topology', false);
             setCheck('board-tint', false);
@@ -2454,7 +2454,7 @@
             setCheck('hide-boards', true);   // shells read better without boards
           },
           dotplot: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', false);
             setCheck('board-topology', false);
             setCheck('board-tint', false);
@@ -2464,7 +2464,7 @@
             setCheck('hide-boards', false);
           },
           full: function () {
-            setSel('board-signature', 'A1');
+            setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
             setCheck('board-filaments', true);
             setCheck('board-topology', true);
             setCheck('board-tint', false);    // tint vs cloud is mutually exclusive in spirit
