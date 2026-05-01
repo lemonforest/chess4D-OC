@@ -2500,9 +2500,21 @@ function _checkWinConditionSync() {
 
 function setGameMode(mode) {
     console.log(`🎮 Switching to game mode: ${mode}`);
-    
+
     // Stop any running bot interval
     stopBotMoveInterval();
+
+    // M13.4.3 — also cancel any in-flight Bot.makeMove. stopBotMoveInterval
+    // clears the pre-bot 1.5s delay timer (bots that haven't started
+    // searching yet), but doesn't reach a bot already mid-search. Without
+    // this, an engine bot searching when the user switches to Two Players
+    // would still apply its move when the search completed, AND the
+    // post-move executeMove path would run, leaving the user in a
+    // confusing state. cancelInFlight increments a generation counter
+    // that every makeMove checks at its await boundaries and bails on.
+    if (typeof Bot !== 'undefined' && typeof Bot.cancelInFlight === 'function') {
+        Bot.cancelInFlight();
+    }
 
     // Update current mode
     currentGameMode = mode;
