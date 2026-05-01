@@ -197,11 +197,27 @@ test.describe('Bot match regression (M11.50)', () => {
       // Verify no NEW pageerrors during this strategy's plies. (We allow
       // pre-existing errors from earlier strategies — fail only if THIS
       // strategy introduced new ones.)
-      const errorsAfterStrategy = pageErrors.length;
       const newErrors = pageErrors.slice(errorsBeforeStrategy);
       expect(
         newErrors,
         `${strategy.key} introduced ${newErrors.length} new uncaught errors:\n${newErrors.join('\n')}`
+      ).toEqual([]);
+
+      // Catch the silent-hang bug class explicitly: even when Bot.makeMove
+      // returns false "gracefully" (no exception → ok=true above), if the
+      // bridge console reports state-translation or FEN4 parse failures,
+      // that's a real bug — the bot silently does nothing and from the
+      // user's perspective the game hangs after move 1. This assertion
+      // landed alongside the chess-spectral 1.6.1 strict-pawn-axis FEN4
+      // parser fix (worker was emitting "P/w@..." which 1.5 accepted but
+      // 1.6.1 rejects with "pawn 'P' must be followed by axis letter").
+      const stateTransFailures = consoleErrors.filter((e) =>
+        /state translation failed|Fen4ParseError|pawn 'P' must be followed/i.test(e)
+      );
+      expect(
+        stateTransFailures,
+        `${strategy.key} produced ${stateTransFailures.length} state-translation / FEN4 ` +
+        `errors in console (silent hang signal):\n${stateTransFailures.join('\n')}`
       ).toEqual([]);
     });
   }
