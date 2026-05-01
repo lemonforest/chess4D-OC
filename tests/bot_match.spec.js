@@ -36,20 +36,19 @@ const SMOKE_READY_TIMEOUT = 90_000;        // Pyodide cold-boot
 const PER_MOVE_TIMEOUT_MS = 30_000;        // each Bot.makeMove allowed up to 30s
 const MOVES_PER_STRATEGY = 2;              // 2 plies per strategy = quick smoke
 
-// Strategies to test. JS-side strategies (v0/random/heuristic) finish in
-// <100ms and MUST make a move (mustMakeMove: true). Engine strategies
-// (M13.4) call into Pyodide and respect timeBudgetMs=4000; the chess-
-// spectral-1.6.1 engine docstring flags pure-Python 4D move-gen as
-// ~250s at the 28-king starting position's 2152-move legal set. With a
-// 4s time budget the engine may return no move at very dense positions
-// — that's documented upstream, not a bug. We log it but don't fail.
-// (mustMakeMove: false for engine strategies.)
+// Strategies to test. After M13.4.1 added the engine→v0 fallback, ALL
+// strategies must make a move at the starting position — the engine
+// strategies fall back to the v0 heuristic when the underlying chess-
+// spectral search exhausts its time_budget_ms (which it always does at
+// the 28-king starting position; pure-Python 4D move-gen takes ~250s
+// per the upstream docstring). The fallback ensures the game progresses
+// even when the engine itself can't finish a search.
 const STRATEGIES_TO_TEST = [
-  { key: 'v0',              label: 'JS heuristic baseline',  expectedMaxMs: 5_000,  mustMakeMove: true  },
-  { key: 'random',          label: 'random control',         expectedMaxMs: 5_000,  mustMakeMove: true  },
-  { key: 'engine-material', label: 'engine + material eval', expectedMaxMs: 25_000, mustMakeMove: false },
-  { key: 'engine-spectral', label: 'engine + spectral eval', expectedMaxMs: 25_000, mustMakeMove: false },
-  { key: 'engine-qm',       label: 'engine + QM eval',       expectedMaxMs: 25_000, mustMakeMove: false },
+  { key: 'v0',              label: 'JS heuristic baseline',  expectedMaxMs: 5_000,  mustMakeMove: true },
+  { key: 'random',          label: 'random control',         expectedMaxMs: 5_000,  mustMakeMove: true },
+  { key: 'engine-material', label: 'engine material (→v0 fallback)', expectedMaxMs: 25_000, mustMakeMove: true },
+  { key: 'engine-spectral', label: 'engine spectral (→v0 fallback)', expectedMaxMs: 25_000, mustMakeMove: true },
+  { key: 'engine-qm',       label: 'engine QM (→v0 fallback)',       expectedMaxMs: 25_000, mustMakeMove: true },
 ];
 
 test.describe('Bot match regression (M11.50)', () => {
