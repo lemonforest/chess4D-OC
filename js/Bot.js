@@ -941,16 +941,16 @@ Bot.strategies = {
     // Returns null on bridge unavailability (e.g., page loaded with
     // bridge boot pending) so Bot.makeMove falls back gracefully.
     'engine-material': {
-        label: 'Engine — material eval (cs1.6 alpha-beta)',
-        getBestMove: function (gb, team) { return Bot._engineGetBestMove('material'); },
+        label: 'Engine — material eval (cs1.6 alpha-beta, falls back to v0)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('material', gb, team); },
     },
     'engine-spectral': {
-        label: 'Engine — spectral eval (channel energy)',
-        getBestMove: function (gb, team) { return Bot._engineGetBestMove('spectral'); },
+        label: 'Engine — spectral eval (channel energy, falls back to v0)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('spectral', gb, team); },
     },
     'engine-qm': {
-        label: 'Engine — QM eval (Born-rule observables)',
-        getBestMove: function (gb, team) { return Bot._engineGetBestMove('qm'); },
+        label: 'Engine — QM eval (Born-rule observables, falls back to v0)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('qm', gb, team); },
     },
 };
 
@@ -958,13 +958,23 @@ Bot.strategies = {
 // strategy.getBestMove call sites already `await` so the existing async
 // path through Bot.makeMove (set up in M11.28a) handles this naturally.
 //
+// M13.4.1 — when the engine returns no move (search budget exhausted
+// before any depth completed, FEN4 round-trip failure, etc.), fall back
+// to the v0 heuristic so the game progresses. This is the perf escape
+// hatch for the chess-spectral 1.6.1 caveat: pure-Python 4D move-gen at
+// the 28-king starting position takes ~250s per the upstream docstring,
+// so engine-* strategies CANNOT reasonably make a move at full starting
+// density within timeBudgetMs=4000. Without the fallback, the user sees
+// a silent hang. With it, a v0 move plays and the game progresses; the
+// engine becomes practical once material thins later in the game.
+//
 // Search depth + time budget come from the existing TIMING constants;
-// future work (M13.4.1) can expose per-strategy slider tuning.
-Bot._engineGetBestMove = async function (evaluator) {
+// future M13.4.2 can expose per-strategy slider tuning.
+Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
     if (typeof window === 'undefined' || !window.SpectralBridge ||
         typeof window.SpectralBridge.getBestMove !== 'function') {
-        console.warn('[m13.4/engine] bridge.getBestMove unavailable; falling back to null');
-        return null;
+        console.warn('[m13.4/engine] bridge.getBestMove unavailable; falling back to v0');
+        return Bot.getBestMove(gameBoard, team);
     }
     try {
         const res = await window.SpectralBridge.getBestMove({
@@ -973,8 +983,17 @@ Bot._engineGetBestMove = async function (evaluator) {
             timeBudgetMs: 4000,
         });
         if (!res || !res.ok || !res.move) {
-            console.warn('[m13.4/engine] getBestMove failed:', res && res.error);
-            return null;
+            // Engine couldn't find a move in budget. At the 28-king
+            // starting position this is expected (pure-Python search
+            // can't complete depth 1 in 4s). Fall back to v0 so the
+            // game progresses; the user sees a move + a console note
+            // about the fallback.
+            console.warn(
+                '[m13.4.1/engine-fallback] engine eval=' + evaluator +
+                ' returned no move (' + (res && res.error ? res.error : 'no-result') +
+                '); falling back to v0 heuristic'
+            );
+            return Bot.getBestMove(gameBoard, team);
         }
         const m = res.move;
         console.log(
