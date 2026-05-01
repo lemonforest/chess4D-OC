@@ -43,8 +43,14 @@
   const AXIS_KEYS = ['x', 'y', 'z', 'w'];
   const TUBE_SEGMENTS = 32;       // tubular subdivisions along the curve
   const TUBE_RADIAL_SEGMENTS = 8; // around the tube cross-section
-  let _tubeRadius = 1.5;          // default thickness; setThickness updates
-  let _opacity = 0.65;            // default opacity; setOpacity updates
+  // Defaults bumped after user reported "axial lines aren't drawing":
+  // - radius 1.5 was too thin to read against the busy 4D scene
+  // - opacity 0.65 + depthTest=true had the tubes occluded by board
+  //   geometry from many camera angles
+  // Now: radius 3.0, opacity 0.85, depthTest false (always-on-top, matches
+  // SpectralPV / SpectralQmCurrent which always render visibly).
+  let _tubeRadius = 3.0;          // default thickness; setThickness updates
+  let _opacity = 0.85;            // default opacity; setOpacity updates
 
   let _scene = null;
   let _gameBoard = null;
@@ -65,7 +71,9 @@
         transparent: true,
         opacity: _opacity,
         depthWrite: false,
-        depthTest: true,    // tubes sit at piece elevation; let pieces occlude
+        depthTest: false,   // always render on top so tubes are visible
+                            // regardless of camera angle / piece occlusion
+                            // (matches SpectralPV / SpectralQmCurrent pattern)
       });
     }
   }
@@ -82,14 +90,18 @@
       c[axis] = i;
       try {
         const p = gfx.boardCoordinates(c.x | 0, c.y | 0, c.z | 0, c.w | 0);
-        // Lift slightly above the board surface so the tube is visible
-        // above the piece bodies but below the cloud / filaments.
-        points.push(new THREE.Vector3(p.x, p.y + 4.5, p.z));
+        // Lift well ABOVE pieces (typical piece height ~5-10 above board
+        // surface) so the tube reads clearly. depthTest=false on the
+        // material handles occlusion in the other direction.
+        points.push(new THREE.Vector3(p.x, p.y + 12.0, p.z));
       } catch (_) {
         return null;
       }
     }
-    return new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.0);
+    // 'centripetal' gives smoother, less wiggly curves than 'catmullrom'
+    // with tension=0 — particularly important for the w-axis where the
+    // 8 super-board centers may be on an arc layout.
+    return new THREE.CatmullRomCurve3(points, false, 'centripetal');
   }
 
   function _rebuildAxis(axis, focus) {
@@ -111,7 +123,10 @@
     } else {
       const m = new THREE.Mesh(newGeom, _materials[axis]);
       m.frustumCulled = false;
-      m.renderOrder = 4; // above QmCurrent/PV/etc; below pieces (default 0+)
+      // renderOrder 8 — above PV (7), QmCurrent arrows (6), filaments (5);
+      // depthTest=false handles the depth-buffer occlusion regardless of
+      // renderOrder, but the order keeps multi-overlay z-stacking sane.
+      m.renderOrder = 8;
       _meshes[axis] = m;
       _scene.add(m);
     }
@@ -130,6 +145,13 @@
     for (const axis of AXIS_KEYS) {
       _rebuildAxis(axis, _currentFocus);
     }
+    // Diagnostic log so users can confirm in DevTools whether the rebuild
+    // is firing when they expect it (selectPiece, bot move, etc.).
+    console.log(
+      `[m14.7/axial] rebuilt 4 tubes through (${_currentFocus.x},${_currentFocus.y},` +
+      `${_currentFocus.z},${_currentFocus.w}) — radius=${_tubeRadius}, ` +
+      `opacity=${_opacity}, enabled=${_enabled}`
+    );
     if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
   }
 
