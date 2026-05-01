@@ -370,7 +370,16 @@ def _state_to_fen4(state):
         char = upper if p.color == Color.WHITE else upper.lower()
         coord = f'{int(sq.x)},{int(sq.y)},{int(sq.z)},{int(sq.w)}'
         if p.piece_type == PieceType.PAWN and p.pawn_axis is not None:
-            placements.append(f'{char}/{p.pawn_axis.name.lower()}@{coord}')
+            # FEN4 v1 pawn-axis syntax per chess-spectral 1.6.1's strict
+            # parser (chess_spectral.fen_4d.parse): "Pw@x,y,z,w" — the
+            # axis letter directly follows the piece char with NO slash.
+            # Pre-fix this serialized "P/w@..." which 1.5 may have
+            # accepted but 1.6.1 explicitly rejects with
+            # "pawn 'P' must be followed by axis letter ('w' or 'y'), got '/'".
+            # Bug surfaced when bot vs bot hung after move 1 — Bot.engine
+            # round-trips state through FEN4 to feed Board4D.from_fen, and
+            # the parse error returned ok=false from getBestMove.
+            placements.append(f'{char}{p.pawn_axis.name.lower()}@{coord}')
         else:
             placements.append(f'{char}@{coord}')
     return '4d-fen v1: ' + '; '.join(placements)
