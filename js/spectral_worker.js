@@ -1235,6 +1235,16 @@ def _do_get_prob_current():
         return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
     try:
         r = _gpc(gs4)
+        # M14.8 audit fix: chess_spectral 1.6.1's get_probability_current
+        # returns j as a 2D ndarray of shape (4096, 4). Pyodide's toJs
+        # converts a 2D ndarray to nested JS arrays at the documented
+        # depth, NOT to a flat Float32Array. Our SpectralQmCurrent (M14.2)
+        # JS expects a flat 16384-length array indexed as j[4*idx+axis],
+        # so a 2D return silently failed the length check and the viz
+        # never rendered. Flatten here so the bridge contract gives JS
+        # what its consumer expects: 1D Float32 of length 4096*4 = 16384.
+        if isinstance(r, dict) and 'j' in r and hasattr(r['j'], 'flatten'):
+            r['j'] = r['j'].flatten().astype('float32')
         return r
     except Exception as e:
         return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
