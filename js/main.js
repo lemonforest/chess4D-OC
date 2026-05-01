@@ -309,6 +309,71 @@ function setupPieceSelection() {
     
     // Handle clicks
     canvas.addEventListener('click', function(event) {
+        // M14.4b: Shift+click → Born-rule projective measurement at the
+        // clicked cell. Intercepts BEFORE piece-selection / move-target
+        // logic so it doesn't interfere with regular play. No-op when
+        // SpectralMeasurePanel isn't loaded — graceful degradation.
+        if (event.shiftKey && window.SpectralMeasurePanel &&
+            typeof window.SpectralMeasurePanel.measure === 'function' &&
+            gameBoard && gameBoard.graphics) {
+            try {
+                selectionSystem.raycaster.setFromCamera(selectionSystem.mouse, camera);
+                // Try pieces first, then any other intersected geometry
+                // (boards / move-target indicators) so the user can click
+                // either occupied or empty cells.
+                let hit = null;
+                const piecesArr = (gameBoard.graphics.piecesContainer &&
+                    gameBoard.graphics.piecesContainer.children.filter(p => p.canRayCast)) || [];
+                if (piecesArr.length > 0) {
+                    const ints = selectionSystem.raycaster.intersectObjects(piecesArr);
+                    if (ints.length > 0) hit = ints[0];
+                }
+                if (!hit && gameBoard.graphics.boardsContainer) {
+                    const ints = selectionSystem.raycaster.intersectObjects(
+                        gameBoard.graphics.boardsContainer.children, true);
+                    if (ints.length > 0) hit = ints[0];
+                }
+                if (hit) {
+                    const worldPos = hit.point || hit.object.position;
+                    const coords = gameBoard.graphics.worldCoordinates(worldPos);
+                    if (coords && typeof coords.x === 'number') {
+                        const x = Math.max(0, Math.min(7, coords.x | 0));
+                        const y = Math.max(0, Math.min(7, coords.y | 0));
+                        const z = Math.max(0, Math.min(7, coords.z | 0));
+                        const w = Math.max(0, Math.min(7, coords.w | 0));
+                        // Auto-open the measurement panel (ticks the checkbox
+                        // so the UI state matches what the user is seeing).
+                        // Direct setEnabled call instead of synthesizing a
+                        // 'change' event — avoids the eslint Event-undefined
+                        // warning + the localStorage write isn't needed for
+                        // a transient interaction (the persistent toggle is
+                        // the user's checkbox click).
+                        const toggle = document.getElementById('measure-panel-toggle');
+                        if (toggle && !toggle.checked) toggle.checked = true;
+                        if (window.SpectralMeasurePanel.setEnabled) {
+                            window.SpectralMeasurePanel.setEnabled(true);
+                        }
+                        // Also update the input fields so the user sees
+                        // which cell was measured.
+                        const xEl = document.getElementById('measure-x');
+                        const yEl = document.getElementById('measure-y');
+                        const zEl = document.getElementById('measure-z');
+                        const wEl = document.getElementById('measure-w');
+                        if (xEl) xEl.value = x;
+                        if (yEl) yEl.value = y;
+                        if (zEl) zEl.value = z;
+                        if (wEl) wEl.value = w;
+                        window.SpectralMeasurePanel.measure(x, y, z, w);
+                    }
+                }
+            } catch (err) {
+                console.warn('[m14.4b/measure] Shift+click error:', err);
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            return; // suppress regular click handling
+        }
+
         // Check if clicking on a possible move location
         if (selectionSystem.selectedPiece && gameState.possibleMoves) {
             const pieces = gameBoard.graphics.possibleMovesContainer.children.filter(p => p.canRayCast);
