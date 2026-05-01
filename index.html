@@ -298,6 +298,13 @@
                         <option value="shells">Smooth shells (hide boards + iso)</option>
                         <option value="dotplot">Dot plot (discrete spheres)</option>
                         <option value="full">Full multi-layer (cloud + topology + maxima)</option>
+                        <!-- M13.6: QM-flavored presets. "Kinematics" = static |ψ|²
+                             density (where the wavefunction has support); "Dynamics"
+                             = probability-current arrows (where amplitude is flowing).
+                             Pair naturally with engine-qm bot strategy — see the
+                             tooltip on each option. -->
+                        <option value="kinematics">Kinematics (QM density |ψ|²)</option>
+                        <option value="dynamics">Dynamics (probability current j(c))</option>
                     </select>
                 </div>
 
@@ -2492,6 +2499,11 @@
             setCheck('heatmap-maxima', false);
             setCheck('hide-boards', false);
             setCheck('board-commutator', false);
+            // M13.6: QM layers cleared by 'off' too — without this they
+            // persist when the user toggles between presets, which is
+            // confusing because qm-density and board-tint both paint cells.
+            setCheck('qm-density-tint', false);
+            setCheck('qm-current', false);
           },
           cloud: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2502,6 +2514,8 @@
             setCheck('board-dotplot', false);
             setCheck('heatmap-maxima', false);
             setCheck('hide-boards', false);
+            setCheck('qm-density-tint', false); // M13.6: clear QM so cloud isn't z-fighting density
+            setCheck('qm-current', false);
           },
           topology: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2512,6 +2526,8 @@
             setCheck('board-dotplot', false);
             setCheck('heatmap-maxima', true);    // peaks pair naturally with MS skeleton
             setCheck('hide-boards', false);
+            setCheck('qm-density-tint', false); // M13.6
+            setCheck('qm-current', false);
           },
           tint: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2522,6 +2538,8 @@
             setCheck('board-dotplot', false);
             setCheck('heatmap-maxima', false);
             setCheck('hide-boards', false);
+            setCheck('qm-density-tint', false); // M13.6: tint and qm-density both paint cells; pick one
+            setCheck('qm-current', false);
           },
           shells: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2532,6 +2550,8 @@
             setCheck('board-dotplot', false);
             setCheck('heatmap-maxima', false);
             setCheck('hide-boards', true);   // shells read better without boards
+            setCheck('qm-density-tint', false); // M13.6
+            setCheck('qm-current', false);
           },
           dotplot: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2542,6 +2562,8 @@
             setCheck('board-dotplot', true);
             setCheck('heatmap-maxima', false);
             setCheck('hide-boards', false);
+            setCheck('qm-density-tint', false); // M13.6
+            setCheck('qm-current', false);
           },
           full: function () {
             setSel('board-signature', 'STD4_X'); // M14.8b: A1 is uniform per-cell; STD4_X has variation
@@ -2552,6 +2574,42 @@
             setCheck('board-dotplot', false);
             setCheck('heatmap-maxima', true);
             setCheck('hide-boards', true);
+            setCheck('qm-density-tint', false); // M13.6: full preset is classical multi-layer; QM has its own preset
+            setCheck('qm-current', false);
+          },
+          // M13.6 — kinematics preset. Per-cell |ψ|² Born-rule density
+          // tint shows WHERE the wavefunction has support. Boards stay
+          // visible (kinematics is a static snapshot — useful with pieces
+          // showing). Channel cloud off so the QM density tint isn't
+          // visually competing with the channel-energy heatmap.
+          kinematics: function () {
+            setSel('board-signature', 'off');     // cloud off — focus on density
+            setCheck('board-filaments', false);
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);        // would z-fight with qm-density tint
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+            setCheck('qm-density-tint', true);    // |ψ|² per-cell viridis
+            setCheck('qm-current', false);
+          },
+          // M13.6 — dynamics preset. Probability-current arrows j(c) =
+          // Im(ψ* ∇ψ) show HOW amplitude is flowing. Pair with QM density
+          // tint underneath so the arrows ride on top of the support
+          // map — together they're "where it is" + "where it's going",
+          // the standard kinematics-plus-dynamics pairing.
+          dynamics: function () {
+            setSel('board-signature', 'off');
+            setCheck('board-filaments', false);   // classical filaments off — j(c) is the QM analog
+            setCheck('board-topology', false);
+            setCheck('board-tint', false);
+            setCheck('board-isosurfaces', false);
+            setCheck('board-dotplot', false);
+            setCheck('heatmap-maxima', false);
+            setCheck('hide-boards', false);
+            setCheck('qm-density-tint', true);    // density underneath
+            setCheck('qm-current', true);         // arrows on top
           },
         };
         sel.addEventListener('change', function () {
