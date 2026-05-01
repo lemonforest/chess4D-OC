@@ -6,6 +6,13 @@ The user said: *"we'll need to see what we opened up api wise and what we find w
 
 **Update 2026-04-29 (afternoon)**: chess-spectral **1.5.0 published to PyPI** at 19:18 UTC. Every `§17.1` QM and `§17.5` dev/debug method enumerated below is **honored** in the upstream `chess_spectral.qm_4d_bridge` and `chess_spectral_4d.bridge` modules. The 1.6 engine module remained an outstanding ask.
 
+**Update 2026-05-01**: chess-spectral **1.7.1 published**. Two key improvements that make engine bots genuinely playable in chess4D-OC:
+
+- **`SearchOptions.time_budget_ms` is now honored mid-iteration** (was checked only between iterative-deepening passes). At the dense 28-king starting position, depth-1 search now returns in ~2001ms with budget=2000ms (vs ~8.5 minutes in 1.6.1) and yields a real `best_move` from the partial iteration. Engine bots return engine-quality moves even at full starting density.
+- **FEN4 parser accepts both `Pw@x,y,z,w` (1.6.1 strict) AND `P/w@x,y,z,w` (legacy slash form)**. Fully resolves the "bot vs bot hangs after move 1" regression PR #80 patched JS-side. Our worker keeps emitting `Pw@` for cross-version compat.
+
+Wire-up: M11.51 (pin bump `>=1.6.1` → `>=1.7.1`). M13.4.4's JS-side `Promise.race` becomes a defense-in-depth backstop (rarely fires now that upstream respects budget) but stays in place for regression-catch.
+
 **Update 2026-04-30**: chess-spectral **1.6.1 published**. The §16 ship-gate release adds:
 - **Engine surface**: `chess_spectral_4d.engine.search.search(board, evaluator, options) → SearchResult` (with `pv: List[Move4D]` principal variation), three evaluators (`material`, `qm`, `spectral`) at both 2D and 4D, plus tournament harness.
 - **Bitboard4D**: `chess_spectral.spatial_4d` with attack tables, ray tables, `Board4D` state — the fast move-gen primitive.
