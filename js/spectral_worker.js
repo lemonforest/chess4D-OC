@@ -1486,10 +1486,36 @@ _do_evaluate_position()
 };
 
 self.onmessage = async (event) => {
+  // CodeQL alert #29 (medium, js/missing-origin-check): Web Workers
+  // loaded same-origin can only receive messages from same-origin
+  // scripts — browsers don't expose worker.postMessage to cross-origin
+  // code, so event.origin is always empty string for same-origin Worker
+  // IPC and the origin check is technically redundant. We add it anyway
+  // as defense-in-depth: if a future browser bug or extension somehow
+  // routes messages through, we drop them silently rather than running
+  // arbitrary handler dispatch with potentially-malicious method names.
+  // Empty origin is the standard same-origin signal for Web Workers.
+  if (event.origin && event.origin !== '' && event.origin !== self.location.origin) {
+    console.warn('[worker] dropping postMessage from unexpected origin:', event.origin);
+    return;
+  }
   const data = event.data || {};
   const { id, method, args = [] } = data;
   if (!id || !method) {
     // Ignore unrelated messages (e.g., extension noise).
+    return;
+  }
+  // Validate method name against the known handlers dictionary BEFORE
+  // dispatching. `handlers` has a fixed set of keys; reject anything
+  // else upstream of the dispatch so we never dynamic-dispatch on a
+  // user-controlled string. (CodeQL doesn't currently flag the existing
+  // `handlers[method]` pattern, but the explicit check is good hygiene.)
+  if (!Object.prototype.hasOwnProperty.call(handlers, method)) {
+    self.postMessage({
+      id,
+      ok: false,
+      error: { name: 'UnknownMethod', message: `Unknown bridge method: ${method}` },
+    });
     return;
   }
   try {

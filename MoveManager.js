@@ -179,9 +179,16 @@ function MoveManager(gameBoard, clientTeam, mode) {
 //		let newMoveHistory = Move.convertFromJson(json.moveHistory)
 		this.moveHistory = DMoveList.fromList(json.moveHistory, this.gameBoard);
 		this.gameBoard.loadPieces(json.pieces);
-		
-		pointer = new Pointer(scene, camera, this.gameBoard, this)
-		console.log(pointer)
+
+		// CodeQL #7 (missing-variable-declaration): legacy multiplayer-load
+		// path. `Pointer`, `scene`, `camera` are undefined globals from
+		// older client-side code; this whole branch is currently dead
+		// (no multiplayer save/load is wired in chess4D-OC). Adding
+		// `let` prevents implicit-global assignment if the path ever
+		// re-activates and silences CodeQL. Doesn't fix the dangling
+		// references — those need a real audit if multiplayer is revived.
+		let pointer = new Pointer(scene, camera, this.gameBoard, this);
+		console.log(pointer);
 	}
 	
 	this.loadFromPlayerAssignment = function(playerAssignment) {
