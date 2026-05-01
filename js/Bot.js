@@ -413,6 +413,34 @@ const Bot = {
             return Promise.resolve(false);
         }
 
+        // Stamp the expected team into the move object so executeMoveImmediate
+        // can validate it — catches stale engine results where the engine
+        // computed a move for the wrong side (searched pre-previous-move board).
+        move.team = team;
+
+        // Sanity-check: verify the piece at the origin square exists and
+        // belongs to the expected team. If not, the move came from a stale
+        // board snapshot (engine searched before the previous applyMove
+        // committed). Log loudly and bail rather than crashing in moveMesh.
+        const moveOriginPiece = gameBoard.pieces[move.x0][move.y0][move.z0][move.w0];
+        if (!moveOriginPiece) {
+            console.error(
+                `[bot-stale-move] makeMove: no piece at origin ` +
+                `(${move.x0},${move.y0},${move.z0},${move.w0}) for team ${team}. ` +
+                `Engine likely searched a stale board. Discarding move; ` +
+                `check window.__BRIDGE_LOG__ for applyMove timing.`
+            );
+            return Promise.resolve(false);
+        }
+        if (moveOriginPiece.team !== team) {
+            console.error(
+                `[bot-stale-move] makeMove: piece at origin ` +
+                `(${move.x0},${move.y0},${move.z0},${move.w0}) is team ${moveOriginPiece.team} ` +
+                `but bot is team ${team}. Engine searched a stale board. Discarding.`
+            );
+            return Promise.resolve(false);
+        }
+
         console.log(`🤖 Bot (team ${team}) selected move: (${move.x0},${move.y0},${move.z0},${move.w0}) → (${move.x1},${move.y1},${move.z1},${move.w1})`);
 
         return new Promise((resolve) => {
@@ -516,9 +544,36 @@ const Bot = {
      * Execute move immediately (internal helper)
      */
     executeMoveImmediate: function(gameBoard, moveManager, move, resolve) {
-        // Clear bot's visual selection
+        // Guard: verify the piece at the origin square still exists and belongs
+        // to the expected team before doing anything. The engine's search runs
+        // asynchronously in the Pyodide worker; if it searched a stale board
+        // (e.g., the previous move committed to the JS board after the search
+        // started), it can return coordinates from the old position — an origin
+        // square that is now empty or occupied by the opponent. Executing that
+        // move crashes BoardGraphics.moveMesh with "Cannot read properties of
+        // null (reading 'position')". See browser screenshot 2026-05-01.
         const sourcePiece = gameBoard.pieces[move.x0][move.y0][move.z0][move.w0];
-        
+        if (!sourcePiece) {
+            console.error(
+                `[bot-stale-move] executeMoveImmediate: no piece at origin ` +
+                `(${move.x0},${move.y0},${move.z0},${move.w0}) — ` +
+                `move was likely computed on a stale board. Discarding.`
+            );
+            if (gameBoard.graphics) gameBoard.graphics.hidePossibleMoves();
+            resolve(false);
+            return;
+        }
+        if (sourcePiece.team !== move.team && move.team !== undefined) {
+            console.error(
+                `[bot-stale-move] executeMoveImmediate: piece at origin ` +
+                `(${move.x0},${move.y0},${move.z0},${move.w0}) belongs to team ` +
+                `${sourcePiece.team} but expected team ${move.team}. Discarding.`
+            );
+            if (gameBoard.graphics) gameBoard.graphics.hidePossibleMoves();
+            resolve(false);
+            return;
+        }
+
         // Use selection system to unhighlight
         if (typeof window !== 'undefined' && window.selectionSystem && sourcePiece && sourcePiece.mesh) {
             window.selectionSystem.unhighlight(sourcePiece.mesh);
@@ -527,12 +582,12 @@ const Bot = {
             // Fallback: manual restore
             sourcePiece.mesh.material.color.setHex(sourcePiece.mesh.material.originalColor);
         }
-        
+
         // Hide possible moves
         if (gameBoard.graphics) {
             gameBoard.graphics.hidePossibleMoves();
         }
-        
+
         // Execute the move
         try {
             moveManager.move(
@@ -1084,6 +1139,36 @@ Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
             return Bot.getBestMove(gameBoard, team);
         }
         const m = res.move;
+
+        // Validate the engine's move against the current JS board.
+        // The engine runs in the Pyodide worker and can lag behind the JS
+        // gameBoard state if applyMove and getBestMove are overlapping in the
+        // applyChain. A stale result produces a move from a square that's now
+        // empty or owned by the opposite team — which crashes BoardGraphics.moveMesh.
+        // Fall back to v0 rather than execute a stale move.
+        if (m && gameBoard && gameBoard.pieces) {
+            const pieceAtOrigin = gameBoard.pieces[m.x0] &&
+                                  gameBoard.pieces[m.x0][m.y0] &&
+                                  gameBoard.pieces[m.x0][m.y0][m.z0] &&
+                                  gameBoard.pieces[m.x0][m.y0][m.z0][m.w0];
+            if (!pieceAtOrigin) {
+                console.warn(
+                    '[m13.4/engine-stale] engine returned move from empty square ' +
+                    `(${m.x0},${m.y0},${m.z0},${m.w0}) — JS board has no piece there. ` +
+                    'Engine searched a pre-applyMove board snapshot. Falling back to v0.'
+                );
+                return Bot.getBestMove(gameBoard, team);
+            }
+            if (pieceAtOrigin.team !== team) {
+                console.warn(
+                    '[m13.4/engine-stale] engine returned move from wrong-team piece ' +
+                    `(${m.x0},${m.y0},${m.z0},${m.w0}): piece.team=${pieceAtOrigin.team} ` +
+                    `but expected team=${team}. Falling back to v0.`
+                );
+                return Bot.getBestMove(gameBoard, team);
+            }
+        }
+
         console.log(
             '[m13.4/engine] eval=' + (res.evaluator || evaluator) +
             ' depth=' + res.depth + ' nodes=' + res.nodesSearched +
