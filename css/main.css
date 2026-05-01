@@ -200,6 +200,54 @@ body {
     border-color: var(--accent-secondary);
 }
 
+/* M13.7 — engine think-budget progress indicator (next to Watch Bots).
+   Shows elapsed/budget for in-flight bridge.getBestMove calls so the
+   user can tell at a glance how much of the slider budget the engine
+   has spent on the current move. Hidden by default (HTML `hidden`
+   attribute); the bridge event subscriber un-hides it on bridge:call:start
+   for getBestMove and re-hides on bridge:call:end. */
+.think-budget {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    min-width: 110px;
+}
+.think-budget[hidden] { display: none; }
+.think-budget__bar {
+    width: 50px;
+    height: 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+.think-budget__fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    transition: width 100ms linear;
+}
+/* When elapsed exceeds budget we paint the bar amber+pulsing — the
+   engine is now in the JS-side hard-timeout grace window and will fall
+   back to v0 shortly. Visual hint that "the bot is still trying but
+   over budget." */
+.think-budget--over .think-budget__fill {
+    background: linear-gradient(90deg, #ffaa33, #ff7733);
+    animation: think-budget-pulse 1s ease-in-out infinite;
+}
+@keyframes think-budget-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+
 .menu-btn, .settings-btn {
     background: var(--bg-tertiary);
     border: 1px solid var(--accent-primary);

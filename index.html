@@ -153,6 +153,16 @@
             <button class="mode-btn" id="mode-bot-vs-bot" data-mode="bot-vs-bot">
                 Watch Bots
             </button>
+            <!-- M13.7 — think-budget progress indicator. Subscribes to
+                 bridge:call:start / bridge:call:end CustomEvents fired
+                 from spectral_bridge.js for getBestMove. Hidden when
+                 idle; shows "elapsed / budget" + a fill bar while the
+                 engine is searching. Read budget from the engine think-
+                 time slider so the UI matches what the user dialed in. -->
+            <div class="think-budget" id="think-budget" hidden>
+                <div class="think-budget__bar"><div class="think-budget__fill" id="think-budget-fill"></div></div>
+                <span class="think-budget__text" id="think-budget-text">0.0s / 4.0s</span>
+            </div>
         </div>
         <div class="turn-indicator" id="turn-indicator">
             <span class="turn-icon" id="turn-icon">♚</span>
@@ -2233,6 +2243,76 @@
             try { localStorage.setItem(TTK, ttSlider.value); } catch (_) {}
           });
         }
+
+        // M13.7 — think-budget progress indicator next to "Watch Bots".
+        // Subscribes to bridge:call:start / bridge:call:end CustomEvents
+        // for getBestMove only (other bridge calls are typically <50ms;
+        // showing a progress bar for them would be visual noise).
+        //
+        // Budget = current engine-thinktime-slider value (read live so
+        // dragging the slider mid-search updates the bar). Elapsed =
+        // wall-clock since bridge:call:start. Once elapsed exceeds budget
+        // the bar paints amber + pulses (we're in the +500ms grace
+        // window before Bot._engineGetBestMove falls back to v0).
+        (function setupThinkBudget() {
+          var wrap = document.getElementById('think-budget');
+          var fill = document.getElementById('think-budget-fill');
+          var text = document.getElementById('think-budget-text');
+          if (!wrap || !fill || !text) return;
+          var rafHandle = null;
+          var startMs = 0;
+          var watching = false;
+          function fmt(ms) { return (ms / 1000).toFixed(1) + 's'; }
+          function readBudgetMs() {
+            var v = (window.RUNTIME_OVERRIDES &&
+                     window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS) || 4000;
+            return Math.max(500, v);
+          }
+          function tick() {
+            if (!watching) return;
+            var elapsed = Date.now() - startMs;
+            var budget = readBudgetMs();
+            var ratio = Math.min(1, elapsed / budget);
+            fill.style.width = (ratio * 100).toFixed(1) + '%';
+            text.textContent = fmt(elapsed) + ' / ' + fmt(budget);
+            if (elapsed > budget) {
+              wrap.classList.add('think-budget--over');
+            } else {
+              wrap.classList.remove('think-budget--over');
+            }
+            rafHandle = requestAnimationFrame(tick);
+          }
+          document.addEventListener('bridge:call:start', function (ev) {
+            // Only track engine searches — other bridge methods finish
+            // too fast for the bar to be useful and would just flicker.
+            if (!ev.detail || ev.detail.method !== 'getBestMove') return;
+            startMs = ev.detail.t0 || Date.now();
+            watching = true;
+            wrap.hidden = false;
+            wrap.classList.remove('think-budget--over');
+            if (rafHandle) cancelAnimationFrame(rafHandle);
+            rafHandle = requestAnimationFrame(tick);
+          });
+          document.addEventListener('bridge:call:end', function (ev) {
+            if (!ev.detail || ev.detail.method !== 'getBestMove') return;
+            watching = false;
+            if (rafHandle) cancelAnimationFrame(rafHandle);
+            rafHandle = null;
+            // Brief flash of the final state, then hide. If the call
+            // failed, leave the bar visible 1.5s longer so the user
+            // can see something went wrong.
+            var hideDelay = ev.detail.ok === false ? 1500 : 350;
+            var dt = ev.detail.durationMs || 0;
+            var budget = readBudgetMs();
+            var ratio = Math.min(1, dt / budget);
+            fill.style.width = (ratio * 100).toFixed(1) + '%';
+            text.textContent = fmt(dt) + ' / ' + fmt(budget) +
+                               (ev.detail.ok === false ? ' ⚠' : '');
+            setTimeout(function () {
+              if (!watching) wrap.hidden = true;
+            }, hideDelay);
+          });
+        })();
       });
     </script>
 
