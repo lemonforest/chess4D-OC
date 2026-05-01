@@ -1028,18 +1028,51 @@ Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
         window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS != null)
         ? window.RUNTIME_OVERRIDES.BOT_THINK_TIME_MS
         : 4000;
+    // M13.4.4 — JS-side hard timeout. chess-spectral 1.6.1's
+    // SearchOptions.time_budget_ms is checked BETWEEN iterative-deepening
+    // iterations only; depth 1 alone at the dense 28-king starting
+    // position takes ~8 minutes of pure-Python move generation per the
+    // upstream docstring (~250s × WASM overhead). Without a JS-side
+    // timeout the slider is essentially advisory — bot appears stuck
+    // for many minutes regardless of slider value.
+    //
+    // Promise.race vs setTimeout(thinkTimeOverride + grace) forces
+    // the v0 fallback at the slider boundary. The bridge's underlying
+    // search keeps running in the worker until it returns; we just
+    // discard the result. Caveat: subsequent bridge calls still queue
+    // in the worker behind the slow-running search until it completes.
+    // Proper fix is upstream cancellation protocol (M11.51 C-extension
+    // wheels likely make budget checks fast enough to be honored).
+    const HARD_TIMEOUT_GRACE_MS = 500;
+    const hardTimeoutMs = thinkTimeOverride + HARD_TIMEOUT_GRACE_MS;
     try {
-        const res = await window.SpectralBridge.getBestMove({
+        let timedOut = false;
+        const timeoutToken = Symbol('engine-timeout');
+        const timeoutPromise = new Promise((resolve) => {
+            setTimeout(() => {
+                timedOut = true;
+                resolve(timeoutToken);
+            }, hardTimeoutMs);
+        });
+        const enginePromise = window.SpectralBridge.getBestMove({
             evaluator: evaluator,
             maxDepth: 3,
             timeBudgetMs: thinkTimeOverride,
         });
+        const res = await Promise.race([enginePromise, timeoutPromise]);
+        if (timedOut || res === timeoutToken) {
+            console.warn(
+                '[m13.4.4/engine-timeout] bridge.getBestMove(' + evaluator +
+                ') exceeded JS hard timeout ' + hardTimeoutMs + 'ms (slider was ' +
+                thinkTimeOverride + 'ms); falling back to v0. Worker search continues; ' +
+                'discarding eventual result.'
+            );
+            return Bot.getBestMove(gameBoard, team);
+        }
         if (!res || !res.ok || !res.move) {
-            // Engine couldn't find a move in budget. At the 28-king
-            // starting position this is expected (pure-Python search
-            // can't complete depth 1 in 4s). Fall back to v0 so the
-            // game progresses; the user sees a move + a console note
-            // about the fallback.
+            // Engine returned but with no move (search budget honored
+            // upstream + no completed depth). Fall back to v0 so the
+            // game progresses; user sees a move + a console note.
             console.warn(
                 '[m13.4.1/engine-fallback] engine eval=' + evaluator +
                 ' returned no move (' + (res && res.error ? res.error : 'no-result') +
