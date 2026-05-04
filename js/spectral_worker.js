@@ -671,14 +671,23 @@ _do_preview()
   // the gradient field. Pulls from the M6 encoder cache so it costs
   // a slice per request (~no work) once the cache is warm.
   //
-  // args: { channels: ['A1','STD4_X',...] }
-  // returns: { ok, history_len, channels: { name: [4096 floats], ... } }
+  // args: { channels: ['A1','STD4_X',...], useSheets?: bool }
+  //   useSheets=true: encode_4d(pos4, sheets=SheetState) → 45067-dim.
+  //   The base 11 channels still occupy offsets 0..45055; sheet aux
+  //   sits at 45056..45066. Non-Markovian context (castling, EP, STM,
+  //   halfmove, rep) is baked into the full vector so positions that
+  //   differ only by history are now correctly distinguished. Opt-in:
+  //   default false preserves the existing 45056-dim behavior.
+  // returns: { ok, history_len, channels: { name: [4096 floats], ... },
+  //            encoding_dim, used_sheets }
   getBoardEncoding(args) {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
     const channels = (args && Array.isArray(args.channels) && args.channels.length > 0)
       ? args.channels
       : ['A1'];
+    const useSheets = !!(args && args.useSheets);
     pyodide.globals.set('_board_enc_channels', channels);
+    pyodide.globals.set('_board_enc_use_sheets', useSheets);
     return pyodide
       .runPython(
         `
@@ -688,7 +697,24 @@ def _do_board_encoding():
     cache = _encoder_cache
     if cache is None or cache.get('error'):
         return {'ok': False, 'reason': (cache or {}).get('error', 'encoder unavailable'), 'history_len': _history_len}
-    enc = cache['encoding']
+
+    if _board_enc_use_sheets:
+        # Rebuild with SheetState for the representation-complete encoding.
+        try:
+            from chess_spectral import SheetState, encode_aux_block
+            from chess_spectral.encoder_4d import encode_4d, ENCODING_DIM
+            sheet = SheetState.from_game_state_4d(_state)
+            enc = encode_4d(cache['pos4'], sheets=sheet)
+            enc_dim = len(enc)  # 45067
+        except Exception as _e:
+            # Fall back to base encoding + log
+            print(f'[py/sheet] SheetState encode failed: {_e}; using base')
+            enc = cache['encoding']
+            enc_dim = cache.get('encoding_dim', 45056)
+    else:
+        enc = cache['encoding']
+        enc_dim = cache.get('encoding_dim', 45056)
+
     chans = cache['channels']  # [(name, offset), ...]
     by_name = {n: o for (n, o) in chans}
     out = {}
@@ -698,17 +724,103 @@ def _do_board_encoding():
             out[name] = None
             continue
         slc = enc[offset:offset + 4096]
-        # to_py via dict_converter handles list-of-floats efficiently.
         out[name] = [float(v) for v in slc]
     return {
         'ok': True,
         'history_len': _history_len,
         'channels': out,
+        'encoding_dim': enc_dim,
+        'used_sheets': _board_enc_use_sheets,
     }
 _do_board_encoding()
 `
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.9.0 §19 SheetState non-Markovian aux block (M19.1)
+  //
+  // The 11-dim SheetState captures position context that the base 45056-dim
+  // encoder cannot distinguish: castling rights (4 bools), en-passant target
+  // (1 float via Z₆₄ carrier), side-to-move (1 float), half-move clock
+  // (1 float via Z₁₀₁ Fourier carrier for exact round-trip on [0,100]),
+  // fullmove number (1 float), and repetition count (1 float).
+  //
+  // With sheets, encode_4d(pos4, sheets=SheetState) → ndarray(45067,).
+  // Without sheets (default), → ndarray(45056,). Existing viz modules keep
+  // working on the 45056-dim base; sheets are purely additive.
+  //
+  // HDC future-proofing: the aux block will be bundled into the hypervector
+  // when the bit-serialized resonant ALU instrument ships. Use ENCODING_DIM
+  // constant; never hardcode 45056.
+  // ───────────────────────────────────────────────────────────────────
+
+  // Returns the current position's SheetState as a human-readable dict +
+  // the 11-dim aux vector. Useful for the "position completeness" debug
+  // panel and for understanding which non-Markovian features affect
+  // the representation-complete spectral signature.
+  getSheetState() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_get_sheet_state():
+    try:
+        from chess_spectral import SheetState, encode_aux_block
+    except ImportError as _e:
+        return {'ok': False, 'error': f'SheetState not available: {_e}'}
+    try:
+        sheet = SheetState.from_game_state_4d(_state)
+        aux = encode_aux_block(sheet)
+        # Expose human-readable fields from the sheet object where accessible.
+        # SheetState carries castling rights, EP target, STM, halfmove clock,
+        # fullmove number, repetition count per the 1.9.0 API.
+        def _safe(attr, default=None):
+            v = getattr(sheet, attr, default)
+            try: return bool(v) if isinstance(v, bool) else (int(v) if isinstance(v, int) else float(v))
+            except Exception: return str(v) if v is not None else default
+        return {
+            'ok': True,
+            'aux_vector': [float(x) for x in aux],
+            'dim': len(aux),
+            'side_to_move': _safe('side_to_move', None),
+            'halfmove_clock': _safe('halfmove_clock', None),
+            'fullmove_number': _safe('fullmove_number', None),
+            'repetition_count': _safe('repetition_count', None),
+            'en_passant': _safe('en_passant', None),
+            'castling': {
+                'white_kingside':   _safe('castling_white_kingside', None),
+                'white_queenside':  _safe('castling_white_queenside', None),
+                'black_kingside':   _safe('castling_black_kingside', None),
+                'black_queenside':  _safe('castling_black_queenside', None),
+            },
+        }
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_get_sheet_state()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  // Returns the current encoding dimensions:
+  //   { base: 45056, withSheets: 45067 }
+  // Use this instead of hardcoding. When the bit-serialized resonant HDC
+  // instrument ships, these numbers will change.
+  getEncodingDim() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+try:
+    from chess_spectral.encoder_4d import ENCODING_DIM
+    {'ok': True, 'base': int(ENCODING_DIM), 'withSheets': int(ENCODING_DIM) + 11}
+except Exception as _e:
+    {'ok': False, 'error': f'{type(_e).__name__}: {_e}', 'base': 45056, 'withSheets': 45067}
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries });
   },
 
   // Diagnostic — returns piece count + state type. Used by the debug panel.
@@ -718,27 +830,22 @@ _do_board_encoding()
       .runPython(
         `
 def _do_info():
-    # M11.40a: count pieces from _state (which may be GameState4D or chess4d)
-    # rather than a fresh initial_position() so the type matches the live state.
-    count = 0
-    state_type = type(_state).__name__
+    # M11.40b: _state is always GameState4D; use iter_pieces() for count.
     try:
-        if hasattr(_state, 'board') and hasattr(_state.board, '_squares'):
-            count = sum(1 for _ in _state.board._squares)
-        elif hasattr(_state, 'board') and hasattr(_state.board, 'pieces_of'):
-            for col in (Color.WHITE, Color.BLACK):
-                try:
-                    count += sum(1 for _ in _state.board.pieces_of(col))
-                except Exception:
-                    pass
+        count = sum(1 for _ in _state.iter_pieces())
     except Exception:
         count = -1
+    try:
+        from chess_spectral.encoder_4d import ENCODING_DIM
+        enc_dim = int(ENCODING_DIM)
+    except Exception:
+        enc_dim = None
     return {
         'piece_count': count,
-        'state_type': state_type,
-        'use_gs4_state': _USE_GS4_STATE,
+        'state_type': type(_state).__name__,
         'legality_ops': _legality_ops,
-        'api_caps': dict(_API_CAPS),
+        'encoding_dim_base': enc_dim,
+        'encoding_dim_with_sheets': (enc_dim + 11) if enc_dim is not None else None,
     }
 _do_info()
 `

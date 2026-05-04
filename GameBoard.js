@@ -137,6 +137,10 @@ GameBoard.prototype = {
 						if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
 							window.SpectralEvalBreakdown.refresh();
 						}
+						// M19.1: refresh SheetState panel — castling/EP/halfmove/rep
+						if (window.SpectralSheetPanel && typeof window.SpectralSheetPanel.refresh === 'function') {
+							window.SpectralSheetPanel.refresh();
+						}
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -176,6 +180,10 @@ GameBoard.prototype = {
 							}
 							if (window.SpectralEvalBreakdown && typeof window.SpectralEvalBreakdown.refresh === 'function') {
 								window.SpectralEvalBreakdown.refresh();
+							}
+							// M19.1: refresh SheetState panel
+							if (window.SpectralSheetPanel && typeof window.SpectralSheetPanel.refresh === 'function') {
+								window.SpectralSheetPanel.refresh();
 							}
 						}
 					}).catch((err) => {

@@ -47,6 +47,15 @@
   const gpuFlag = new URLSearchParams(location.search).get('gpu');
   window.__GPU__ = (gpuFlag === 'webgpu') ? 'webgpu' : 'webgl';
 
+  // M19.1: ?useSheets=1 — augment all getBoardEncoding calls with the
+  // SheetState non-Markovian aux block (chess-spectral 1.9.0). Makes the
+  // spectral signature representation-complete: positions that differ only
+  // in castling rights, en-passant target, halfmove clock, or repetition
+  // count now map to distinct 45067-dim vectors (vs 45056 without sheets).
+  // Also enables the SheetState info panel in the spectral section.
+  const sheetsFlag = new URLSearchParams(location.search).get('useSheets');
+  window.__USE_SHEETS__ = (sheetsFlag === '1' || sheetsFlag === 'true');
+
   const worker = new Worker('js/spectral_worker.js');
   const pending = new Map();
   let nextId = 1;
@@ -329,8 +338,33 @@
     // M10 full-board encoding for the heat-map / filament overlays.
     // Refreshes only when the move-history advances (cheap slice off the
     // cached 45,056-dim vector).
+    // getBoardEncoding: respects window.__USE_SHEETS__ (?useSheets=1 URL flag).
+    // When set, routes through the 45067-dim sheet-augmented encoding so all
+    // viz modules (heatmap, board tint, filaments) get representation-complete
+    // spectral signatures without any change to their call sites.
     getBoardEncoding: (channels) =>
-      applyChain.then(() => call('getBoardEncoding', { channels: channels || ['A1'] })),
+      applyChain.then(() => call('getBoardEncoding', {
+        channels: channels || ['A1'],
+        useSheets: !!(typeof window !== 'undefined' && window.__USE_SHEETS__),
+      })),
+
+    // M19.1: SheetState-augmented encoding (opt-in). Same channel slices as
+    // getBoardEncoding but runs encode_4d(pos4, sheets=SheetState) → 45067-dim.
+    // Positions differing only in castling/EP/halfmove/repetition now map to
+    // different spectral signatures — representation-complete per §19.
+    getBoardEncodingWithSheets: (channels) =>
+      applyChain.then(() => call('getBoardEncoding', { channels: channels || ['A1'], useSheets: true })),
+
+    // Returns the current position's SheetState as a human-readable dict:
+    //   { ok, dim, aux_vector: float[11], side_to_move, halfmove_clock,
+    //     fullmove_number, repetition_count, en_passant, castling: {...} }
+    // Refreshed after each applyMove via applyChain so callers see post-move state.
+    getSheetState: () =>
+      applyChain.then(() => call('getSheetState')),
+
+    // Returns { ok, base: 45056, withSheets: 45067 }. Use this instead of
+    // hardcoding dims — the bit-serialized resonant HDC instrument may change them.
+    getEncodingDim: () => call('getEncodingDim'),
 
     // M3.5 parity helpers — kept for the parity harness. listInitialPieces
     // is still the cleanest way to enumerate the canonical starting position.

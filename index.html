@@ -76,6 +76,7 @@
         'js/spectral_pv.js',
         'js/spectral_eval_breakdown.js',
         'js/spectral_measure_panel.js',
+        'js/spectral_sheet_panel.js',
         'js/spectral_axial_lines.js',
         'js/spectral_isosurfaces.js',
         'js/spectral_dotplot.js',
@@ -396,6 +397,25 @@
                         <input type="checkbox" id="qm-current">
                         Probability current j(c)
                     </label>
+                </div>
+                <!-- M19.1: SheetState non-Markovian context panel (chess-spectral 1.9.0).
+                     Shows castling rights, en-passant target, halfmove clock, repetition
+                     count — the position context beyond piece placement that makes the
+                     spectral signature representation-complete. Enable ?useSheets=1 in
+                     the URL to bake them into a full 45067-dim encoding. Future: bundled
+                     into the bit-serialized resonant HDC hypervector (ALU-only). -->
+                <div class="spectral-control spectral-m10">
+                    <label title="Show the position's non-Markovian state: castling rights, en-passant target, halfmove clock, repetition count. These are the history-dependent components that make encode_4d representation-complete with sheets=SheetState. Enable ?useSheets=1 to augment the spectral encoding to 45067-dim (vs 45056 base).">
+                        <input type="checkbox" id="sheet-panel-toggle">
+                        Position sheet (castling/EP/halfmove/rep)
+                    </label>
+                </div>
+                <div id="sheet-info-panel" class="sheet-info-panel" hidden>
+                    <div class="sheet-info-row"><span class="sheet-label">Castling</span><span id="sheet-castling">—</span></div>
+                    <div class="sheet-info-row"><span class="sheet-label">En passant</span><span id="sheet-ep">—</span></div>
+                    <div class="sheet-info-row"><span class="sheet-label">Halfmove clock</span><span id="sheet-halfmove">—</span></div>
+                    <div class="sheet-info-row"><span class="sheet-label">Repetitions</span><span id="sheet-rep">—</span></div>
+                    <div class="sheet-info-row sheet-info-dim"><span class="sheet-label">Enc dim</span><span id="sheet-enc-dim">45056</span><span class="sheet-dim-note" id="sheet-dim-note"></span></div>
                 </div>
                 <!-- M14.5: principal-variation ghost-arrow overlay. Engine bot
                      (engine-* strategies, M13.4) returns SearchResult.pv —
