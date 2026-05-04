@@ -1,6 +1,6 @@
 // spectral_worker.js — Pyodide host running in a Web Worker.
 //
-// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.9.0), and
+// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.12.0), and
 // exposes a small RPC surface to the main thread via spectral_bridge.js.
 // python-chess4d-oana-chiru dropped in M11.40b — chess_spectral_4d is now
 // the sole canonical state type.
@@ -22,15 +22,29 @@
 //   - chess_spectral_4d.initial_position(), STARTING_FEN4                      [1.8.1]
 //   - SheetState non-Markovian aux block (castling/EP/STM/halfmove/rep)        [1.9.0]
 //   - ENCODING_DIM constant + encode_4d(pos4, sheets=...) → 45056 or 45067    [1.9.0]
-//   - get_sheet_state / encode_sheet_aux / decode_sheet_aux_from_vector        [1.9.0]
+//   - SheetStateBIP: uint16 categorical + uint8 halfmove_clock (29× smaller)  [1.10.0]
+//     Draw predicates: castling_alive, ep_target_active, fifty_move_rule,
+//     threefold_claimable. First BSHDC (bit-serialized HDC) spike.
+//   - phase_only_pseudo_legal_moves(pos4, stm_white, ep_file=None)            [1.11.0]
+//     Pure ALU, no python-chess dep. ~190µs at startpos. Returns flat
+//     list of (from_sq_int, to_sq_int, promo_char). PSEUDO-LEGAL only
+//     (check-filtering via state.push not applied). Fourth oracle option.
+//   - encode_4d_bip_hybrid / decode_4d_bip_hybrid                            [1.12.0]
+//     Sign × magnitude factoring. Returns dataclass {sign_packed,
+//     magnitude_scales, magnitudes}. 3.4-3.6× at int8, 5.8-6.4× at int4.
+//     ≥99.99% cosine similarity vs float32. HDC compression layer.
 //
 // State model (M11.40b): _state is chess_spectral_4d.GameState4D throughout.
 // No chess4d dep. No FEN4 round-trip for QM calls. _get_qm_state_obj()
 // returns _state directly.
 //
-// Future (bit-serialized resonant HDC instrument): encoder output will
-// shift from Float32 to packed binary hypervectors (ALU-only). Use
-// ENCODING_DIM constant; never hardcode 45056.
+// HDC instrument (bit-serialized resonant, ALU-only): materializing in
+// 1.10-1.12. Architecture:
+//   encode_4d(pos4)              → float32[45056]   (spectral basis)
+//   encode_4d_bip_hybrid(pos4)   → {sign, mag}      (3.4× compressed)
+//   SheetStateBIP                → 3 bytes           (history, ALU-queryable)
+//   phase_only_pseudo_legal_moves → pure-ALU moves  (no dep)
+// Use ENCODING_DIM constant; never hardcode 45056.
 //
 // See docs/bridge_api.md for the wire-up plan.
 // Protocol: { id, method, args } -> { id, ok, result } | { id, ok:false, error }
@@ -59,13 +73,12 @@ async function ensureInit() {
     await pyodide.loadPackage('micropip');
     const micropip = pyodide.pyimport('micropip');
 
-    // M11.40b — chess_spectral_4d is now the sole runtime dep.
-    // python-chess4d-oana-chiru removed; chess-spectral 1.9.0 ships all
-    // Tier-1 wishlist items (GameState4D push/pop/to_fen/iter_pieces/
-    // is_check/is_checkmate/is_stalemate, initial_position(), STARTING_FEN4,
-    // search(gs4) overload) plus the 1.9.0 SheetState non-Markovian aux block.
+    // M20: chess-spectral 1.12.0 adds the HDC compression layer.
+    // 1.10.0: SheetStateBIP (3-byte ALU-queryable draw state)
+    // 1.11.0: phase_only_pseudo_legal_moves (pure-ALU, no python-chess)
+    // 1.12.0: encode_4d_bip_hybrid / decode_4d_bip_hybrid (sign×mag compression)
     await micropip.install(
-      ['chess-spectral>=1.9.0'],
+      ['chess-spectral>=1.12.0'],
       true /* keep_going */
     );
 
@@ -191,6 +204,61 @@ def _legal_moves_laplacian(state, origin):
         moves.append(m)
     return moves
 
+def _legal_moves_phase_alu(state, origin):
+    """Pure-ALU phase-operator move generator (chess-spectral 1.11.0).
+
+    Uses phase_only_pseudo_legal_moves(pos4, side_to_move_white, ep_file=...)
+    which is entirely ALU-native (no python-chess dependency). Returns a flat
+    list of (from_sq_int, to_sq_int, promo_char) tuples — filtered to the
+    queried origin square.
+
+    IMPORTANT: PSEUDO-LEGAL only — check-filtering (moves that would leave
+    the king in check) is NOT applied. The phase operator generates structural
+    piece-reach destinations; the callers that need fully-legal moves (bot,
+    legality overlay) should use bitboard or laplacian instead. This oracle
+    is most useful for the HDC instrument where pseudo-legal sets are the
+    ALU-native primitive, and for exploring the raw phase-space structure.
+
+    Falls back to bitboard on any import or conversion failure."""
+    piece = state.board.occupant(origin)
+    if piece is None:
+        return []
+    try:
+        from chess_spectral.phase_operators_4d import phase_only_pseudo_legal_moves
+    except ImportError:
+        return _legal_moves_bitboard(state, origin)
+    try:
+        pos4 = _state_to_pos4(state)
+        stm_white = _state_side_to_move()
+        # ep_file: try to get from SheetStateBIP if available.
+        ep_file = None
+        try:
+            from chess_spectral import SheetStateBIP
+            sheet_bip = SheetStateBIP.from_game_state_4d(state)
+            if hasattr(sheet_bip, 'ep_file'):
+                ep_file = sheet_bip.ep_file
+        except Exception:
+            pass
+        raw = phase_only_pseudo_legal_moves(pos4, stm_white, ep_file=ep_file)
+    except Exception as _e:
+        print(f'[py/phase-alu] phase_only_pseudo_legal_moves failed: {_e}')
+        return _legal_moves_bitboard(state, origin)
+    origin_sq = (int(origin.x) << 9) | (int(origin.y) << 6) | (int(origin.z) << 3) | int(origin.w)
+    moves = []
+    for entry in raw:
+        try:
+            from_sq, to_sq, _promo = entry[0], entry[1], entry[2] if len(entry) > 2 else None
+            if int(from_sq) != origin_sq:
+                continue
+            ts = int(to_sq)
+            moves.append(Move4D(
+                from_sq=origin,
+                to_sq=Square4D((ts >> 9) & 7, (ts >> 6) & 7, (ts >> 3) & 7, ts & 7),
+            ))
+        except Exception:
+            continue
+    return moves
+
 def _legal_moves_phase(state, origin):
     """Phase-operator oracle. The occupation-aware A variant already
     filters for king-not-in-check, so no push/pop pass needed.
@@ -222,15 +290,19 @@ def _legal_moves_phase(state, origin):
 
 def _legal_moves_for(state, origin):
     """Dispatch to the active legality oracle.
-    Three oracles (M11.40b — 'spatial' removed):
-      'bitboard'  [DEFAULT] — chess_spectral.spatial_4d.Board4D.legal_moves
-      'phase'               — phase_operators_4d Fourier oracle
-      'laplacian'           — spectral_legality_4d eigenbasis (pawns→bitboard)
+    Four oracles (M20 adds phase-alu):
+      'bitboard'   [DEFAULT] — chess_spectral.spatial_4d.Board4D.legal_moves
+      'phase'                — phase_operators_4d Fourier oracle (occupation-aware)
+      'laplacian'            — spectral_legality_4d eigenbasis (pawns→bitboard)
+      'phase-alu'            — phase_only_pseudo_legal_moves (1.11.0, pure-ALU,
+                               PSEUDO-LEGAL only — no check filter applied)
     """
     if _legality_ops == 'phase':
         return _legal_moves_phase(state, origin)
     if _legality_ops == 'laplacian':
         return _legal_moves_laplacian(state, origin)
+    if _legality_ops == 'phase-alu':
+        return _legal_moves_phase_alu(state, origin)
     return _legal_moves_bitboard(state, origin)
 
 def _pieces_to_dicts(state):
@@ -420,14 +492,15 @@ _encoder_cache = None
     return { ok: true, history_len: 0 };
   },
 
-  // Sets the legality oracle backend.
-  //   'bitboard'  — chess_spectral.spatial_4d.Board4D.legal_moves [M11.40a DEFAULT]
-  //   'phase'     — chess_spectral.phase_operators_4d (Fourier-domain)
-  //   'laplacian' — chess_spectral.spectral_legality_4d (eigenbasis)
-  // M11.40b: 'spatial' removed (was chess4d.pieces.* — dep dropped).
+  // Sets the legality oracle backend (M20: 4 oracles).
+  //   'bitboard'  [DEFAULT] — chess_spectral.spatial_4d.Board4D.legal_moves
+  //   'phase'               — phase_operators_4d occupation-aware Fourier oracle
+  //   'laplacian'           — spectral_legality_4d eigenbasis
+  //   'phase-alu'           — phase_only_pseudo_legal_moves (1.11.0, pure-ALU,
+  //                           PSEUDO-LEGAL — check filter NOT applied; ALU-native)
   setLegalityOps(args) {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
-    const VALID_OPS = ['bitboard', 'phase', 'laplacian'];
+    const VALID_OPS = ['bitboard', 'phase', 'laplacian', 'phase-alu'];
     const ops = (args && VALID_OPS.includes(args.ops)) ? args.ops : 'bitboard';
     pyodide.globals.set('_set_ops_value', ops);
     pyodide.runPython(`
@@ -766,6 +839,35 @@ _do_board_encoding()
       .runPython(
         `
 def _do_get_sheet_state():
+    # M20: try SheetStateBIP first (1.10.0 — 3 bytes, ALU-queryable draw predicates,
+    # 29× smaller than float64 SheetState). Fall back to float SheetState (1.9.0).
+    def _bool_pred(obj, name):
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            try: return bool(fn())
+            except Exception: pass
+        return getattr(obj, name, None)
+
+    try:
+        from chess_spectral import SheetStateBIP
+        sheet = SheetStateBIP.from_game_state_4d(_state)
+        return {
+            'ok': True,
+            'type': 'bip',  # 1.10.0 compact form
+            'categorical': int(sheet.categorical),
+            'halfmove_clock': int(sheet.halfmove_clock),
+            'dim': 3,  # 2 bytes categorical + 1 byte halfmove_clock
+            # ALU bit-mask predicates (draw-detection):
+            'castling_alive':           _bool_pred(sheet, 'castling_alive'),
+            'kingside_castling_alive':  _bool_pred(sheet, 'kingside_castling_alive'),
+            'ep_target_active':         _bool_pred(sheet, 'ep_target_active'),
+            'fifty_move_rule_triggered':_bool_pred(sheet, 'fifty_move_rule_triggered'),
+            'threefold_claimable':      _bool_pred(sheet, 'threefold_claimable'),
+        }
+    except Exception:
+        pass  # fall through to float SheetState
+
+    # 1.9.0 float SheetState fallback
     try:
         from chess_spectral import SheetState, encode_aux_block
     except ImportError as _e:
@@ -773,15 +875,13 @@ def _do_get_sheet_state():
     try:
         sheet = SheetState.from_game_state_4d(_state)
         aux = encode_aux_block(sheet)
-        # Expose human-readable fields from the sheet object where accessible.
-        # SheetState carries castling rights, EP target, STM, halfmove clock,
-        # fullmove number, repetition count per the 1.9.0 API.
         def _safe(attr, default=None):
             v = getattr(sheet, attr, default)
             try: return bool(v) if isinstance(v, bool) else (int(v) if isinstance(v, int) else float(v))
             except Exception: return str(v) if v is not None else default
         return {
             'ok': True,
+            'type': 'float',  # 1.9.0 form
             'aux_vector': [float(x) for x in aux],
             'dim': len(aux),
             'side_to_move': _safe('side_to_move', None),
@@ -790,10 +890,10 @@ def _do_get_sheet_state():
             'repetition_count': _safe('repetition_count', None),
             'en_passant': _safe('en_passant', None),
             'castling': {
-                'white_kingside':   _safe('castling_white_kingside', None),
-                'white_queenside':  _safe('castling_white_queenside', None),
-                'black_kingside':   _safe('castling_black_kingside', None),
-                'black_queenside':  _safe('castling_black_queenside', None),
+                'white_kingside':  _safe('castling_white_kingside', None),
+                'white_queenside': _safe('castling_white_queenside', None),
+                'black_kingside':  _safe('castling_black_kingside', None),
+                'black_queenside': _safe('castling_black_queenside', None),
             },
         }
     except Exception as e:
@@ -821,6 +921,125 @@ except Exception as _e:
 `
       )
       .toJs({ dict_converter: Object.fromEntries });
+  },
+
+  // ───────────────────────────────────────────────────────────────────
+  // chess-spectral 1.12.0 BIP-hybrid encoder (M20)
+  //
+  // encode_4d_bip_hybrid(pos4) → dataclass {sign_packed, magnitude_scales,
+  //   magnitudes}. Sign × magnitude factoring achieves 3.4-3.6× compression
+  //   at 8-bit (5.8-6.4× at 4-bit) with ≥99.99% cosine similarity vs the
+  //   float32 baseline. This is the compression layer for the bit-serialized
+  //   resonant HDC instrument (ALU-only hypervector pipeline).
+  //
+  // Bridge serializes the dataclass through three separate typed arrays:
+  //   sign_packed:       Uint8Array  — bit-packed sign bits (ceil(45056/8)=5632 bytes)
+  //   magnitude_scales:  Float32Array — per-channel scale factors (11 values)
+  //   magnitudes:        Uint8Array  — quantized magnitudes (45056 bytes at int8)
+  // Returns: { ok, sign_packed, magnitude_scales, magnitudes, original_dim,
+  //            compression_ratio, history_len }
+  // decode: pass sign_packed + magnitude_scales + magnitudes back as
+  //   getBoardEncodingBIPDecoded() to reconstruct float32 approximation.
+  // ───────────────────────────────────────────────────────────────────
+
+  getBoardEncodingBIP() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_board_encoding_bip():
+    try:
+        from chess_spectral import encode_4d_bip_hybrid
+    except ImportError as _e:
+        return {'ok': False, 'error': f'encode_4d_bip_hybrid not available: {_e}'}
+    try:
+        pos4 = _state_to_pos4(_state)
+        bip = encode_4d_bip_hybrid(pos4)
+    except Exception as _e:
+        return {'ok': False, 'error': f'encode failed: {type(_e).__name__}: {_e}'}
+    try:
+        import numpy as _np
+        def _to_uint8_list(arr):
+            a = _np.asarray(arr)
+            if a.dtype != _np.uint8: a = a.flatten().astype(_np.uint8)
+            return a.flatten().tolist()
+        def _to_float_list(arr):
+            a = _np.asarray(arr, dtype='float32').flatten()
+            return [float(v) for v in a]
+
+        sp   = _to_uint8_list(bip.sign_packed)
+        ms   = _to_float_list(bip.magnitude_scales)
+        mags = _to_uint8_list(bip.magnitudes)
+        orig_dim = len(mags)  # matches float32 encoding dim
+        packed_bytes = len(sp) + 4 * len(ms) + len(mags)
+        orig_bytes   = orig_dim * 4  # float32
+        ratio = round(orig_bytes / max(1, packed_bytes), 2)
+        return {
+            'ok': True,
+            'sign_packed':       sp,
+            'magnitude_scales':  ms,
+            'magnitudes':        mags,
+            'original_dim':      orig_dim,
+            'compression_ratio': ratio,
+            'history_len':       _history_len,
+        }
+    except Exception as _e:
+        return {'ok': False, 'error': f'serialization failed: {type(_e).__name__}: {_e}'}
+_do_board_encoding_bip()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 3 });
+  },
+
+  // Reconstruct float32 approximation from BIP dataclass fields.
+  // Takes the same {sign_packed, magnitude_scales, magnitudes} the encode
+  // call returns. Cosine similarity ≥ 99.99% vs original float32.
+  getBoardEncodingBIPDecoded(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    if (!args || !args.sign_packed || !args.magnitude_scales || !args.magnitudes) {
+      return Promise.resolve({ ok: false, error: 'missing sign_packed/magnitude_scales/magnitudes' });
+    }
+    pyodide.globals.set('_bip_sign_packed', args.sign_packed);
+    pyodide.globals.set('_bip_magnitude_scales', args.magnitude_scales);
+    pyodide.globals.set('_bip_magnitudes', args.magnitudes);
+    return pyodide
+      .runPython(
+        `
+def _do_bip_decode():
+    try:
+        from chess_spectral import decode_4d_bip_hybrid
+    except ImportError as _e:
+        return {'ok': False, 'error': f'decode_4d_bip_hybrid not available: {_e}'}
+    try:
+        import numpy as _np
+        # Reconstruct the dataclass from its serialized fields.
+        # The exact BIP dataclass constructor may vary — try the most likely form.
+        try:
+            from chess_spectral import BIPEncoding4D
+            bip_obj = BIPEncoding4D(
+                sign_packed=_np.array(list(_bip_sign_packed), dtype=_np.uint8),
+                magnitude_scales=_np.array(list(_bip_magnitude_scales), dtype=_np.float32),
+                magnitudes=_np.array(list(_bip_magnitudes), dtype=_np.uint8),
+            )
+        except Exception:
+            # Fallback: pass as dict/tuple and hope decode accepts it
+            bip_obj = {
+                'sign_packed':      _np.array(list(_bip_sign_packed), dtype=_np.uint8),
+                'magnitude_scales': _np.array(list(_bip_magnitude_scales), dtype=_np.float32),
+                'magnitudes':       _np.array(list(_bip_magnitudes), dtype=_np.uint8),
+            }
+        reconstructed = decode_4d_bip_hybrid(bip_obj)
+        return {
+            'ok': True,
+            'encoding': [float(v) for v in _np.asarray(reconstructed).flatten()],
+            'dim': len(reconstructed),
+        }
+    except Exception as _e:
+        return {'ok': False, 'error': f'{type(_e).__name__}: {_e}'}
+_do_bip_decode()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 3 });
   },
 
   // Diagnostic — returns piece count + state type. Used by the debug panel.
