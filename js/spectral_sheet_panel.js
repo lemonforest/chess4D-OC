@@ -64,6 +64,21 @@
     return String(ep);
   }
 
+  // DOM refs for BIP draw-predicates (added in M20 — SheetStateBIP 1.10.0)
+  let _drawStatusEl = null;
+
+  function _fmtDrawStatus(r) {
+    // SheetStateBIP predicates: castling_alive, ep_target_active,
+    // fifty_move_rule_triggered, threefold_claimable.
+    if (r.type !== 'bip') return null;
+    const parts = [];
+    if (r.fifty_move_rule_triggered)  parts.push('⚠ 50-move');
+    if (r.threefold_claimable)        parts.push('⚠ 3-fold');
+    if (!r.castling_alive)            parts.push('no castling');
+    if (r.ep_target_active)           parts.push('EP available');
+    return parts.length ? parts.join(' · ') : 'no draw claims';
+  }
+
   async function refresh() {
     if (!enabled || !_panel) return;
     if (typeof window === 'undefined' || !window.SpectralBridge ||
@@ -76,17 +91,32 @@
         console.warn('[m19.1/sheet-panel] getSheetState failed:', r && r.error);
         return;
       }
-      if (_castlingEl) _castlingEl.textContent = _fmtCastling(r.castling);
-      if (_epEl)       _epEl.textContent = _fmtEp(r.en_passant);
-      if (_halfmoveEl) {
-        const hm = r.halfmove_clock;
-        _halfmoveEl.textContent = (hm !== null && hm !== undefined) ? String(Math.round(hm)) : '—';
+
+      // M20: SheetStateBIP branch (1.10.0 — compact, ALU-queryable predicates)
+      if (r.type === 'bip') {
+        if (_halfmoveEl) _halfmoveEl.textContent = String(r.halfmove_clock ?? '—');
+        if (_castlingEl) _castlingEl.textContent = r.castling_alive ? 'available' : 'none';
+        if (_epEl)       _epEl.textContent = r.ep_target_active ? 'yes' : 'none';
+        if (_repEl)      _repEl.textContent = r.threefold_claimable ? '3-fold claimable' : '—';
+        const drawStatus = _fmtDrawStatus(r);
+        if (_drawStatusEl) _drawStatusEl.textContent = drawStatus || '';
+        if (_drawStatusEl) _drawStatusEl.style.color = (r.fifty_move_rule_triggered || r.threefold_claimable) ? '#ffaa33' : '#7fdc7f';
+      } else {
+        // Float SheetState fallback (1.9.0)
+        if (_castlingEl) _castlingEl.textContent = _fmtCastling(r.castling);
+        if (_epEl)       _epEl.textContent = _fmtEp(r.en_passant);
+        if (_halfmoveEl) {
+          const hm = r.halfmove_clock;
+          _halfmoveEl.textContent = (hm !== null && hm !== undefined) ? String(Math.round(hm)) : '—';
+        }
+        if (_repEl) {
+          const rc = r.repetition_count;
+          _repEl.textContent = (rc !== null && rc !== undefined) ? String(Math.round(rc)) : '—';
+        }
+        if (_drawStatusEl) _drawStatusEl.textContent = '';
       }
-      if (_repEl) {
-        const rc = r.repetition_count;
-        _repEl.textContent = (rc !== null && rc !== undefined) ? String(Math.round(rc)) : '—';
-      }
-      // Encoding dim line: show base vs with-sheets
+
+      // Encoding dim line
       const useSheets = window.__USE_SHEETS__;
       const activeDim = useSheets ? _encDimWithSheets : _encDimBase;
       if (_encDimEl) _encDimEl.textContent = String(activeDim);
@@ -105,13 +135,14 @@
       if (_initRequested) return;
       _initRequested = true;
 
-      _panel       = document.getElementById('sheet-info-panel');
-      _castlingEl  = document.getElementById('sheet-castling');
-      _epEl        = document.getElementById('sheet-ep');
-      _halfmoveEl  = document.getElementById('sheet-halfmove');
-      _repEl       = document.getElementById('sheet-rep');
-      _encDimEl    = document.getElementById('sheet-enc-dim');
-      _dimNoteEl   = document.getElementById('sheet-dim-note');
+      _panel        = document.getElementById('sheet-info-panel');
+      _castlingEl   = document.getElementById('sheet-castling');
+      _epEl         = document.getElementById('sheet-ep');
+      _halfmoveEl   = document.getElementById('sheet-halfmove');
+      _repEl        = document.getElementById('sheet-rep');
+      _encDimEl     = document.getElementById('sheet-enc-dim');
+      _dimNoteEl    = document.getElementById('sheet-dim-note');
+      _drawStatusEl = document.getElementById('sheet-draw-status');
 
       if (!_panel) return;
       _panel.hidden = !enabled;

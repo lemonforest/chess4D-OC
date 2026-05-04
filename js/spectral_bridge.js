@@ -25,17 +25,17 @@
   const renderFlag = new URLSearchParams(location.search).get('renderer');
   window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
 
-  // Three legality oracles wireable (M11.40b: 'spatial' removed — was chess4d dep):
-  //   bitboard  — chess_spectral.spatial_4d.Board4D.legal_moves [DEFAULT]
+  // Four legality oracles wireable (M20: adds phase-alu):
+  //   bitboard   [DEFAULT] — chess_spectral.spatial_4d.Board4D.legal_moves
   //               The "engineering lens" — bitboard4d + magic-style ray casting.
-  //   phase     — chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d
-  //               (Fourier-domain; founded on the M5/M6 encoder's eigenbasis)
-  //   laplacian — chess_spectral.spectral_legality_4d.reachable_targets_4d
-  //               The "spectral lens" — discrete-Laplacian eigenbasis as a
-  //               structural piece-reach lookup. Pawns defer to bitboard.
-  // All three return the same legal-move set per upstream's parity validation.
+  //   phase      — phase_operators_4d occupation-aware Fourier oracle
+  //   laplacian  — spectral_legality_4d eigenbasis (pawns→bitboard)
+  //   phase-alu  — phase_only_pseudo_legal_moves (1.11.0, pure ALU, no python-chess)
+  //               PSEUDO-LEGAL only: check-filter NOT applied. ~190µs at startpos.
+  //               Portability-optimized for the HDC instrument pipeline.
+  // All three full-legal oracles (bitboard/phase/laplacian) agree per parity harness.
   const opsFlag = new URLSearchParams(location.search).get('legalityOps');
-  window.__LEGALITY_OPS__ = ['phase', 'bitboard', 'laplacian'].includes(opsFlag) ? opsFlag : 'bitboard';
+  window.__LEGALITY_OPS__ = ['phase', 'bitboard', 'laplacian', 'phase-alu'].includes(opsFlag) ? opsFlag : 'bitboard';
 
   // M7e feature flag: ?gpu= picks the renderer backend.
   //   webgl  — Three.js WebGLRenderer (default; broadly compatible)
@@ -365,6 +365,21 @@
     // Returns { ok, base: 45056, withSheets: 45067 }. Use this instead of
     // hardcoding dims — the bit-serialized resonant HDC instrument may change them.
     getEncodingDim: () => call('getEncodingDim'),
+
+    // ─── M20: chess-spectral 1.12.0 BIP-hybrid encoder ──────────────
+    //
+    // getBoardEncodingBIP: sign × magnitude factoring of the 45056-dim
+    // spectral encoding. Returns { ok, sign_packed (Uint8), magnitude_scales
+    // (Float32[11]), magnitudes (Uint8[45056]), original_dim, compression_ratio,
+    // history_len }. 3.4-3.6× at int8, ≥99.99% cosine similarity.
+    // This is the compression layer for the ALU-native HDC instrument.
+    getBoardEncodingBIP: () =>
+      applyChain.then(() => call('getBoardEncodingBIP')),
+
+    // Reconstruct float32 approximation from BIP dataclass fields.
+    // Pass the {sign_packed, magnitude_scales, magnitudes} from getBoardEncodingBIP.
+    getBoardEncodingBIPDecoded: (bipResult) =>
+      call('getBoardEncodingBIPDecoded', bipResult || {}),
 
     // M3.5 parity helpers — kept for the parity harness. listInitialPieces
     // is still the cleanest way to enumerate the canonical starting position.
