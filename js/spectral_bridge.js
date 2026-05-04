@@ -25,19 +25,17 @@
   const renderFlag = new URLSearchParams(location.search).get('renderer');
   window.__RENDERER__ = (renderFlag === 'instanced') ? 'instanced' : 'legacy';
 
-  // Four legality oracles wireable (1.6.1's three lenses + our spatial default):
-  //   spatial   — chess4d.pieces.{type}_moves + state.push filter (default; cheap)
+  // Three legality oracles wireable (M11.40b: 'spatial' removed — was chess4d dep):
+  //   bitboard  — chess_spectral.spatial_4d.Board4D.legal_moves [DEFAULT]
+  //               The "engineering lens" — bitboard4d + magic-style ray casting.
   //   phase     — chess_spectral.phase_operators_4d.occupation_aware_moves_a_4d
   //               (Fourier-domain; founded on the M5/M6 encoder's eigenbasis)
-  //   bitboard  — chess_spectral.spatial_4d.Board4D.legal_moves (M11.32)
-  //               The "engineering lens" — bitboard4d + magic-style ray casting.
-  //   laplacian — chess_spectral.spectral_legality_4d.reachable_targets_4d (M11.33)
+  //   laplacian — chess_spectral.spectral_legality_4d.reachable_targets_4d
   //               The "spectral lens" — discrete-Laplacian eigenbasis as a
-  //               structural piece-reach lookup. Pawns defer to spatial (oracle
-  //               doesn't model pawn rules).
-  // All four return the same legal-move set per upstream's parity validation.
+  //               structural piece-reach lookup. Pawns defer to bitboard.
+  // All three return the same legal-move set per upstream's parity validation.
   const opsFlag = new URLSearchParams(location.search).get('legalityOps');
-  window.__LEGALITY_OPS__ = ['phase', 'bitboard', 'laplacian'].includes(opsFlag) ? opsFlag : 'spatial';
+  window.__LEGALITY_OPS__ = ['phase', 'bitboard', 'laplacian'].includes(opsFlag) ? opsFlag : 'bitboard';
 
   // M7e feature flag: ?gpu= picks the renderer backend.
   //   webgl  — Three.js WebGLRenderer (default; broadly compatible)
