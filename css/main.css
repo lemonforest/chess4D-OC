@@ -2124,3 +2124,41 @@ body {
 @keyframes thinking-spin {
     to { transform: rotate(360deg); }
 }
+
+/* M19.1 — SheetState non-Markovian context panel.
+   Compact info display showing castling/EP/halfmove/rep context.
+   Appears below the "Position sheet" checkbox in the spectral section. */
+.sheet-info-panel {
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: var(--border-radius);
+    padding: 6px 10px;
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.6;
+}
+.sheet-info-panel[hidden] { display: none; }
+.sheet-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+.sheet-label {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.sheet-info-row span:last-child {
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+    word-break: break-all;
+}
+.sheet-info-dim .sheet-dim-note {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-style: italic;
+    font-size: 10px;
+}
+}

@@ -1118,6 +1118,12 @@ function initializeGame() {
                         try { window.SpectralQmCurrent.init(scene, gameBoard); }
                         catch (err) { console.warn('[m14.2/qm-current] init error:', err); }
                     }
+                    // M19.1 — SheetState non-Markovian context panel (1.9.0).
+                    // Shows castling/EP/halfmove/rep after each move.
+                    if (typeof window !== 'undefined' && window.SpectralSheetPanel) {
+                        try { window.SpectralSheetPanel.init(); }
+                        catch (err) { console.warn('[m19.1/sheet-panel] init error:', err); }
+                    }
                     // M14.5 — engine PV ghost-arrow overlay. Consumes
                     // SearchResult.pv returned by bridge.getBestMove (M13.4).
                     if (typeof window !== 'undefined' && window.SpectralPV) {
