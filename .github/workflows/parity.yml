@@ -32,7 +32,9 @@ jobs:
   parity:
     name: Parity diff (JS vs Python)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # M20: bumped from 20 → 30 to match parity.spec.js PARITY_TIMEOUT increase
+    # (12 min watchdog × 2 retries = 24 min + overhead).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
