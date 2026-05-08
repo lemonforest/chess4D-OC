@@ -13,7 +13,13 @@ import { getPreviewUrl } from './smoke-helpers.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const PARITY_TIMEOUT = 5 * 60_000; // 5 min — Pyodide cold-boot + 896 piece comparisons.
+// M20 bump: chess-spectral 1.12.0 adds BIP-hybrid encoder modules; micropip
+// install + Pyodide cold-boot against the production CF URL now takes ~5-7 min.
+// Old 5-min watchdog hit exactly on both attempt and retry in the 2026-05-08
+// cron run (run #25543052493 — both hits at exactly 4.5 min = PARITY_TIMEOUT
+// - 30_000). No correctness diff was found; purely a timing budget issue.
+// 12 min gives adequate headroom; job timeout-minutes was bumped to 30 to match.
+const PARITY_TIMEOUT = 12 * 60_000;
 const SKIPPED_FAILS_TEST = false;
 
 test.describe('Parity', () => {
