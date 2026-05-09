@@ -1,6 +1,6 @@
 // spectral_worker.js — Pyodide host running in a Web Worker.
 //
-// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.12.0), and
+// Boots Pyodide from CDN, micropip-installs chess-spectral (>=1.13.0), and
 // exposes a small RPC surface to the main thread via spectral_bridge.js.
 // python-chess4d-oana-chiru dropped in M11.40b — chess_spectral_4d is now
 // the sole canonical state type.
@@ -33,6 +33,12 @@
 //     Sign × magnitude factoring. Returns dataclass {sign_packed,
 //     magnitude_scales, magnitudes}. 3.4-3.6× at int8, 5.8-6.4× at int4.
 //     ≥99.99% cosine similarity vs float32. HDC compression layer.
+//   - spectral_hybrid + spectral_hybrid_cache: cached BIP-native evaluator   [1.13.0]
+//     evaluate_from_hybrid / channel_energies_from_hybrid skip the float
+//     decode step entirely. make_cached_evaluator() factory wraps with an
+//     LRU cache for the §16 search inner loop. ~15× speedup at warm-LRU
+//     steady state vs spectral_float64. New 'spectral-hybrid' bot evaluator.
+//   - spectral_float32 module: ephemerides-style two-stage architecture     [1.13.0]
 //
 // State model (M11.40b): _state is chess_spectral_4d.GameState4D throughout.
 // No chess4d dep. No FEN4 round-trip for QM calls. _get_qm_state_obj()
@@ -73,12 +79,16 @@ async function ensureInit() {
     await pyodide.loadPackage('micropip');
     const micropip = pyodide.pyimport('micropip');
 
-    // M20: chess-spectral 1.12.0 adds the HDC compression layer.
-    // 1.10.0: SheetStateBIP (3-byte ALU-queryable draw state)
-    // 1.11.0: phase_only_pseudo_legal_moves (pure-ALU, no python-chess)
-    // 1.12.0: encode_4d_bip_hybrid / decode_4d_bip_hybrid (sign×mag compression)
+    // M21: chess-spectral 1.13.0 adds spectral_hybrid + spectral_hybrid_cache —
+    // BIP-native evaluator with LRU cache for the §16 search engine.
+    // ~15× speedup at warm-LRU steady state on engine-spectral plies.
+    //   1.10.0: SheetStateBIP (3-byte ALU-queryable draw state)
+    //   1.11.0: phase_only_pseudo_legal_moves (pure-ALU, no python-chess)
+    //   1.12.0: encode_4d_bip_hybrid / decode_4d_bip_hybrid (sign×mag compression)
+    //   1.13.0: spectral_hybrid evaluate_from_hybrid + channel_energies_from_hybrid
+    //           + make_cached_evaluator LRU factory (the perf win)
     await micropip.install(
-      ['chess-spectral>=1.12.0'],
+      ['chess-spectral>=1.13.0'],
       true /* keep_going */
     );
 
@@ -332,6 +342,13 @@ def _state_to_pos4(state):
 _state = initial_position()
 _history_len = 0
 _encoder_cache = None
+
+# M21 — chess-spectral 1.13.0 spectral-hybrid evaluator LRU cache.
+# Lazily initialized on first 'spectral-hybrid' getBestMove call; persists
+# across calls so the iterative-deepening search benefits from cache hits
+# (the source of the ~15× speedup vs spectral_float64 evaluator). None
+# until first use; a (eval_fn, HybridCache) tuple after.
+_spectral_hybrid_eval_cache = None
 
 def _get_qm_state_obj():
     """Return _state directly — it IS the GameState4D (M11.40b).
@@ -950,6 +967,24 @@ def _do_get_capabilities():
         caps['has_encoder_bip_hybrid'] = True
     except Exception:
         caps['has_encoder_bip_hybrid'] = False
+    # 1.13 spectral_hybrid evaluator (BIP-native, skips float decode)
+    try:
+        from chess_spectral.spectral_hybrid import evaluate_from_hybrid, channel_energies_from_hybrid
+        caps['has_spectral_hybrid'] = True
+    except Exception:
+        caps['has_spectral_hybrid'] = False
+    # 1.13 LRU-cached spectral_hybrid wrapper
+    try:
+        from chess_spectral.spectral_hybrid_cache import make_cached_evaluator, HybridCache
+        caps['has_spectral_hybrid_cache'] = True
+    except Exception:
+        caps['has_spectral_hybrid_cache'] = False
+    # 1.13 spectral_float32 (ephemerides-style float32 sibling)
+    try:
+        from chess_spectral import spectral_float32 as _sf32
+        caps['has_spectral_float32'] = True
+    except Exception:
+        caps['has_spectral_float32'] = False
     # density / current from raw ψ (Tier 2.1 wishlist — chess-spectral 1.9+)
     try:
         from chess_spectral.qm_4d_bridge import get_qm_density_from_psi
@@ -1876,15 +1911,40 @@ def _do_get_best_move():
     except Exception as e:
         return {'ok': False, 'error': f'engine import failed: {type(e).__name__}: {e}'}
 
-    eval_map = {
-        'material': _ev_mat.evaluate,
-        'qm':       _ev_qm.evaluate,
-        'spectral': _ev_sp.evaluate,
-    }
+    # M21 — 'spectral-hybrid' evaluator (chess-spectral 1.13.0). BIP-native
+    # eval with module-level LRU cache. The 15× speedup comes from cache
+    # hits across the iterative-deepening tree, so the cache MUST persist
+    # across getBestMove calls — _spectral_hybrid_eval_cache is a worker-
+    # global tuple (eval_fn, cache).
     eval_name = str(_bm_evaluator) if _bm_evaluator else 'material'
-    eval_fn = eval_map.get(eval_name)
-    if eval_fn is None:
-        return {'ok': False, 'error': f'unknown evaluator: {eval_name!r}'}
+    cache_stats = None
+    if eval_name == 'spectral-hybrid':
+        global _spectral_hybrid_eval_cache
+        try:
+            if _spectral_hybrid_eval_cache is None:
+                from chess_spectral.spectral_hybrid_cache import make_cached_evaluator
+                _spectral_hybrid_eval_cache = make_cached_evaluator(
+                    magnitude_bits=8, cache_size=10000,
+                )
+                print('[py/m21/spectral-hybrid] LRU cache initialized (size=10000, bits=8)')
+            eval_fn, _hybrid_cache = _spectral_hybrid_eval_cache
+        except ImportError as e:
+            return {
+                'ok': False,
+                'error': f'spectral_hybrid_cache unavailable: {e}',
+                'hint': 'requires chess-spectral >=1.13.0',
+            }
+        except Exception as e:
+            return {'ok': False, 'error': f'spectral-hybrid init failed: {type(e).__name__}: {e}'}
+    else:
+        eval_map = {
+            'material': _ev_mat.evaluate,
+            'qm':       _ev_qm.evaluate,
+            'spectral': _ev_sp.evaluate,
+        }
+        eval_fn = eval_map.get(eval_name)
+        if eval_fn is None:
+            return {'ok': False, 'error': f'unknown evaluator: {eval_name!r}'}
 
     try:
         options = SearchOptions(
@@ -1902,6 +1962,21 @@ def _do_get_best_move():
         result = search(_state, eval_fn, options)
     except Exception as e:
         return {'ok': False, 'error': f'search failed: {type(e).__name__}: {e}'}
+
+    # M21: capture cache.stats() AFTER search so the JS layer can surface
+    # hit/miss diagnostics in the engine debug panel. Best-effort — older
+    # HybridCache implementations may not have .stats().
+    if eval_name == 'spectral-hybrid' and _spectral_hybrid_eval_cache is not None:
+        try:
+            _, _hybrid_cache = _spectral_hybrid_eval_cache
+            if hasattr(_hybrid_cache, 'stats'):
+                s = _hybrid_cache.stats()
+                if isinstance(s, dict):
+                    cache_stats = {k: (int(v) if isinstance(v, (int, float)) else v) for k, v in s.items()}
+                else:
+                    cache_stats = {'raw': str(s)}
+        except Exception:
+            cache_stats = None
 
     if result.best_move is None:
         return {'ok': False, 'error': 'no legal moves'}
@@ -1921,7 +1996,7 @@ def _do_get_best_move():
             'to':   {'x': pt[0], 'y': pt[1], 'z': pt[2], 'w': pt[3]},
         })
 
-    return {
+    out = {
         'ok': True,
         'move': {
             'x0': fc[0], 'y0': fc[1], 'z0': fc[2], 'w0': fc[3],
@@ -1936,6 +2011,9 @@ def _do_get_best_move():
         'ttSize': int(getattr(result, 'tt_size', 0)),
         'pv': pv_list,
     }
+    if cache_stats is not None:
+        out['cacheStats'] = cache_stats
+    return out
 _do_get_best_move()
 `
       )

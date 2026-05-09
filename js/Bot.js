@@ -987,6 +987,14 @@ Bot.strategies = {
         label: 'Engine — spectral eval (channel energy, falls back to v0)',
         getBestMove: function (gb, team) { return Bot._engineGetBestMove('spectral', gb, team); },
     },
+    // M21 — chess-spectral 1.13.0: BIP-native evaluator with LRU cache.
+    // Mathematically identical to engine-spectral (same channel energies)
+    // but skips the float decode step on cache hits — ~15× warm-LRU
+    // speedup. Same fallback to v0 on engine timeout.
+    'engine-spectral-hybrid': {
+        label: 'Engine — spectral-hybrid (BIP+LRU, ~15× warm cache, falls back to v0)',
+        getBestMove: function (gb, team) { return Bot._engineGetBestMove('spectral-hybrid', gb, team); },
+    },
     'engine-qm': {
         label: 'Engine — QM eval (Born-rule observables, falls back to v0)',
         getBestMove: function (gb, team) { return Bot._engineGetBestMove('qm', gb, team); },
@@ -1108,13 +1116,25 @@ Bot._engineGetBestMove = async function (evaluator, gameBoard, team) {
             }
         }
 
+        // M21: surface cacheStats when present (engine-spectral-hybrid only).
+        // hit_rate visibility helps validate the ~15× speedup claim live.
+        let cacheNote = '';
+        if (res.cacheStats && typeof res.cacheStats === 'object') {
+            const cs = res.cacheStats;
+            const hits   = cs.hits   != null ? cs.hits   : (cs.hit_count   || 0);
+            const misses = cs.misses != null ? cs.misses : (cs.miss_count  || 0);
+            const total = hits + misses;
+            const rate = total > 0 ? (100 * hits / total).toFixed(1) : '?';
+            cacheNote = ` cache=${hits}/${total} (${rate}%)`;
+        }
         console.log(
             '[m13.4/engine] eval=' + (res.evaluator || evaluator) +
             ' depth=' + res.depth + ' nodes=' + res.nodesSearched +
             ' tt=' + res.ttHits + '/' + res.ttSize +
             ' score=' + (res.score != null ? res.score.toFixed(3) : '?') +
             ' time=' + (res.elapsedMs != null ? res.elapsedMs.toFixed(0) : '?') + 'ms' +
-            ' pvlen=' + ((res.pv && res.pv.length) || 0)
+            ' pvlen=' + ((res.pv && res.pv.length) || 0) +
+            cacheNote
         );
         // M14.5 — push the principal variation to the PV overlay so the
         // user sees the engine's predicted line during the visual gate
