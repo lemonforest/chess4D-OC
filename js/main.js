@@ -1124,6 +1124,13 @@ function initializeGame() {
                         try { window.SpectralSheetPanel.init(); }
                         catch (err) { console.warn('[m19.1/sheet-panel] init error:', err); }
                     }
+                    // M14.3 — entanglement halo viz (per-piece purity).
+                    // Auto-disables itself if upstream get_density_matrix_of
+                    // raises NotImplementedError (probed at boot via caps).
+                    if (typeof window !== 'undefined' && window.SpectralEntanglement) {
+                        try { window.SpectralEntanglement.init(scene, gameBoard); }
+                        catch (err) { console.warn('[m14.3/entanglement] init error:', err); }
+                    }
                     // M14.5 — engine PV ghost-arrow overlay. Consumes
                     // SearchResult.pv returned by bridge.getBestMove (M13.4).
                     if (typeof window !== 'undefined' && window.SpectralPV) {

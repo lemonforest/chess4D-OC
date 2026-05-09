@@ -141,6 +141,10 @@ GameBoard.prototype = {
 						if (window.SpectralSheetPanel && typeof window.SpectralSheetPanel.refresh === 'function') {
 							window.SpectralSheetPanel.refresh();
 						}
+						// M14.3: refresh entanglement halo (purity per piece)
+						if (window.SpectralEntanglement && typeof window.SpectralEntanglement.refresh === 'function') {
+							window.SpectralEntanglement.refresh();
+						}
 					}
 				}).catch((err) => {
 					console.warn('[m4a] bridge.applyMove error', err);
@@ -184,6 +188,10 @@ GameBoard.prototype = {
 							// M19.1: refresh SheetState panel
 							if (window.SpectralSheetPanel && typeof window.SpectralSheetPanel.refresh === 'function') {
 								window.SpectralSheetPanel.refresh();
+							}
+							// M14.3: refresh entanglement halo
+							if (window.SpectralEntanglement && typeof window.SpectralEntanglement.refresh === 'function') {
+								window.SpectralEntanglement.refresh();
 							}
 						}
 					}).catch((err) => {

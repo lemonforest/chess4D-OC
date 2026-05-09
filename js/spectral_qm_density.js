@@ -136,52 +136,53 @@
         console.warn(`[m14.1/qm-density] expected density length 4096, got ${arr ? arr.length : 'null'}`);
         return;
       }
-      // Born-rule normalization sanity-check. In practice the sum is
-      // 1.0 ± 1e-6; if it drifts further, log it but still render.
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-      if (Math.abs(sum - 1.0) > 1e-3) {
-        console.warn(`[m14.1/qm-density] normSq sum drift: ${sum.toFixed(6)} (expected ~1.0)`);
-      }
-
-      const [pLo, pHi] = _percentileBounds(arr, 0.05, 0.95);
-      let mapLo = pLo, mapHi = pHi;
-      let flat = false;
-      // Same percentile-degenerate fallback to absolute min/max as
-      // SpectralBoardTint — Born-rule density at the initial position
-      // is highly symmetric, so percentile range can collapse.
-      if (!Number.isFinite(mapHi - mapLo) || (mapHi - mapLo) < 1e-12) {
-        let aLo = Infinity, aHi = -Infinity;
-        for (let k = 0; k < arr.length; k++) {
-          if (arr[k] < aLo) aLo = arr[k];
-          if (arr[k] > aHi) aHi = arr[k];
-        }
-        if (Number.isFinite(aHi - aLo) && (aHi - aLo) > 1e-12) {
-          mapLo = aLo; mapHi = aHi;
-          console.log('[m14.1/qm-density] percentile range degenerate; using min/max fallback');
-        } else {
-          flat = true;
-        }
-      }
-      const range = mapHi - mapLo;
-      for (let i = 0; i < arr.length; i++) {
-        let t = flat ? 0.5 : (arr[i] - mapLo) / range;
-        if (t < 0) t = 0; else if (t > 1) t = 1;
-        const c = viridisColor(t);
-        im.instanceColor.setXYZ(i, c[0], c[1], c[2]);
-      }
-      im.instanceColor.needsUpdate = true;
-      im.visible = enabled;
-      if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
-      console.log(
-        `[m14.1/qm-density] cells=${arr.length} sum=${sum.toFixed(6)} ` +
-          `clip=[${pLo.toExponential(3)}, ${pHi.toExponential(3)}] ` +
-          `mapped=[${mapLo.toExponential(3)}, ${mapHi.toExponential(3)}]` +
-          (flat ? ' (FLAT — density near-uniform)' : '')
-      );
+      _renderDensity(arr, 'natural');
     } catch (err) {
       console.warn('[m14.1/qm-density] refresh error:', err);
     }
+  }
+
+  // M14.4c — render an arbitrary density array (4096 floats). Shared between
+  // the natural-state refresh path and applyDensityOverride for post-collapse
+  // viz. Source label is logged for diagnosis.
+  function _renderDensity(arr, sourceLabel) {
+    if (!im) return;
+    let sum = 0;
+    for (let i = 0; i < arr.length; i++) sum += arr[i];
+    if (Math.abs(sum - 1.0) > 1e-3) {
+      console.warn(`[m14.1/qm-density] normSq sum drift: ${sum.toFixed(6)} (expected ~1.0; source=${sourceLabel})`);
+    }
+    const [pLo, pHi] = _percentileBounds(arr, 0.05, 0.95);
+    let mapLo = pLo, mapHi = pHi;
+    let flat = false;
+    if (!Number.isFinite(mapHi - mapLo) || (mapHi - mapLo) < 1e-12) {
+      let aLo = Infinity, aHi = -Infinity;
+      for (let k = 0; k < arr.length; k++) {
+        if (arr[k] < aLo) aLo = arr[k];
+        if (arr[k] > aHi) aHi = arr[k];
+      }
+      if (Number.isFinite(aHi - aLo) && (aHi - aLo) > 1e-12) {
+        mapLo = aLo; mapHi = aHi;
+      } else {
+        flat = true;
+      }
+    }
+    const range = mapHi - mapLo;
+    for (let i = 0; i < arr.length; i++) {
+      let t = flat ? 0.5 : (arr[i] - mapLo) / range;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const c = viridisColor(t);
+      im.instanceColor.setXYZ(i, c[0], c[1], c[2]);
+    }
+    im.instanceColor.needsUpdate = true;
+    im.visible = enabled;
+    if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
+    console.log(
+      `[m14.1/qm-density] source=${sourceLabel} cells=${arr.length} sum=${sum.toFixed(6)} ` +
+        `clip=[${pLo.toExponential(3)}, ${pHi.toExponential(3)}] ` +
+        `mapped=[${mapLo.toExponential(3)}, ${mapHi.toExponential(3)}]` +
+        (flat ? ' (FLAT — density near-uniform)' : '')
+    );
   }
 
   window.SpectralQmDensity = {
@@ -213,6 +214,21 @@
       if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
     },
     refresh,
+    // M14.4c — apply a custom density array (e.g., from postCollapsePsi).
+    // Same rendering path as refresh(); overrides the natural-state value
+    // until the next refresh() call (typically the next move).
+    applyDensityOverride(arr) {
+      if (!arr || arr.length !== 4096) {
+        console.warn(`[m14.1/qm-density] applyDensityOverride expected 4096 floats, got ${arr ? arr.length : 'null'}`);
+        return;
+      }
+      if (!enabled) {
+        // Force-enable so the user actually sees the post-collapse state.
+        enabled = true;
+        if (im) im.visible = true;
+      }
+      _renderDensity(arr, 'post-collapse');
+    },
     isEnabled() { return enabled; },
   };
 })();

@@ -102,11 +102,64 @@
         `outcome=(${ox},${oy},${oz},${ow}) P=${p.toExponential(4)} ` +
         `psi_post=Float32Array(${psiLen})`
       );
+
+      // M14.4c — route postCollapsePsi to the QM viz layers if the user
+      // has opted in (#post-collapse-route checkbox). Computes the
+      // density of the post-collapse ψ via bridge.getQmDensityFromPsi
+      // and pushes it into SpectralQmDensity as an override. Same for
+      // current via getProbabilityCurrentFromPsi (only if upstream
+      // ships the helper — JS-side fallback is impractical for j(c)).
+      const routeBox = document.getElementById('post-collapse-route');
+      const routeEnabled = routeBox && routeBox.checked;
+      if (routeEnabled && r.postCollapsePsi && r.postCollapsePsi.length === 90112) {
+        try {
+          await _routePostCollapse(r.postCollapsePsi);
+        } catch (e) {
+          console.warn('[m14.4c/route] failed:', e);
+        }
+      }
+
       return r;
     } catch (err) {
       _setStatus(`Measurement threw: ${err && err.message ? err.message : err}`, 'error');
       return null;
     }
+  }
+
+  // M14.4c — push a post-collapse ψ through the QM viz layers.
+  // Works in two passes: density (always tries; JS-fallback if needed),
+  // current (only if upstream native helper exists, gracefully no-ops otherwise).
+  async function _routePostCollapse(psi) {
+    if (!window.SpectralBridge) return;
+    // Density: drives the QM density tint.
+    try {
+      const dr = await window.SpectralBridge.getQmDensityFromPsi(Array.from(psi));
+      if (dr && dr.ok && dr.density && dr.density.length === 4096) {
+        if (window.SpectralQmDensity && typeof window.SpectralQmDensity.applyDensityOverride === 'function') {
+          window.SpectralQmDensity.applyDensityOverride(dr.density);
+          console.log('[m14.4c/route] density override applied (source=' + (dr.source || 'native') + ')');
+        }
+      } else {
+        console.log('[m14.4c/route] density-from-psi failed:', dr && dr.error);
+      }
+    } catch (e) { console.warn('[m14.4c/route] density-from-psi threw:', e); }
+
+    // Current: only fires if upstream has the helper.
+    try {
+      const cr = await window.SpectralBridge.getProbabilityCurrentFromPsi(Array.from(psi));
+      if (cr && cr.ok && cr.j && cr.j.length === 16384) {
+        if (window.SpectralQmCurrent && typeof window.SpectralQmCurrent.applyCurrentOverride === 'function') {
+          window.SpectralQmCurrent.applyCurrentOverride(cr.j);
+          console.log('[m14.4c/route] current override applied');
+        }
+      } else if (cr && cr.source === 'no-native-helper') {
+        // Expected on chess-spectral builds without get_probability_current_from_psi.
+        // Density tint still updates; current arrows stay at the natural-state value.
+        console.log('[m14.4c/route] current-from-psi unavailable upstream; skipping arrows');
+      } else {
+        console.log('[m14.4c/route] current-from-psi failed:', cr && cr.error);
+      }
+    } catch (e) { console.warn('[m14.4c/route] current-from-psi threw:', e); }
   }
 
   window.SpectralMeasurePanel = {
