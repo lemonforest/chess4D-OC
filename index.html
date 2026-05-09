@@ -729,7 +729,7 @@
                         </select>
                     </div>
                     <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
-                        Different strategies = different play styles. Try ``engine-spectral`` vs ``engine-material`` for a real game; ``random`` as a control.
+                        Different strategies = different play styles. ``engine-spectral-hybrid`` (cs1.13+) is the fastest spectral evaluator — same channel-energy math as ``engine-spectral`` but BIP-native with an LRU cache (~15× warm-cache speedup). Try ``engine-spectral-hybrid`` vs ``engine-material`` for a real game; ``random`` as a control.
                     </p>
                     <!-- M11.28a: bot visual-pacing slider. Reduces the after-compute
                          visual hold; compute time itself is unaffected. -->
@@ -742,7 +742,7 @@
                                aria-label="Bot visual pacing in milliseconds"
                                title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. The 'engine-*' strategies (cs1.6+) run in the Pyodide worker and don't freeze the page during search." />
                         <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
-                            The 'engine-material', 'engine-spectral', and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches. (M13.5 retired the JS-side 'smart' strategy; ?bot=smart aliases to engine-material.)
+                            The 'engine-material', 'engine-spectral', 'engine-spectral-hybrid' (cs1.13+, ~15× warm-cache speedup), and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches. (M13.5 retired the JS-side 'smart' strategy; ?bot=smart aliases to engine-material.)
                         </p>
                     </div>
                     <!-- M13.4.2: engine think-time slider. Caps how long

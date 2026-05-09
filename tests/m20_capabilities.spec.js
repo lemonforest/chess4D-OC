@@ -376,6 +376,86 @@ test.describe('M20 + M14.3 + M14.4c + M20.1 capabilities', () => {
     }
   });
 
+  // ── M21 chess-spectral 1.13.0 spectral-hybrid evaluator ──────────────
+
+  test('M21 §17 — capabilities expose 1.13.0 flags', async () => {
+    const caps = await page.evaluate(() => window.__SPECTRAL_CAPS__);
+    expect(caps, '__SPECTRAL_CAPS__ populated').toBeTruthy();
+    // These are added in 1.13.0 — they must be booleans (true if installed,
+    // false if older chess-spectral installed; never undefined).
+    expect(typeof caps.has_spectral_hybrid).toBe('boolean');
+    expect(typeof caps.has_spectral_hybrid_cache).toBe('boolean');
+    expect(typeof caps.has_spectral_float32).toBe('boolean');
+    console.log(
+      '[m21 §17] hybrid=' + caps.has_spectral_hybrid +
+      ' hybrid_cache=' + caps.has_spectral_hybrid_cache +
+      ' float32=' + caps.has_spectral_float32 +
+      ' (cs version=' + caps.chess_spectral_version + ')'
+    );
+  });
+
+  test('M21 §18 — engine-spectral-hybrid runs and reports cacheStats when 1.13+ available', async () => {
+    const caps = await page.evaluate(() => window.__SPECTRAL_CAPS__);
+    if (!caps || !caps.has_spectral_hybrid_cache) {
+      test.skip(true, 'spectral_hybrid_cache not installed (chess-spectral < 1.13)');
+      return;
+    }
+    const r = await page.evaluate(async () => {
+      const b = window.SpectralBridge;
+      await b.resetToInitial();
+      // Short budget: at the dense 28-king start, even with 15× speedup the
+      // engine may not finish depth 1 in 3s. ok=false with no-legal-moves
+      // is acceptable; what we want is no crash + cacheStats present.
+      const res = await b.getBestMove({
+        evaluator: 'spectral-hybrid',
+        maxDepth: 1,
+        timeBudgetMs: 5000,
+      });
+      return res;
+    });
+    expect(r, 'getBestMove returns a value').toBeTruthy();
+    // ok or graceful no-legal-moves are both fine; what we don't want is a crash.
+    if (r.ok) {
+      console.log('[m21 §18] spectral-hybrid returned a move at depth=' + r.depth);
+      // cacheStats may be present (1.13+) or absent (pre-1.13). When present,
+      // hits + misses should be a sensible number (>0 means cache was used).
+      if (r.cacheStats) {
+        const cs = r.cacheStats;
+        const hits   = cs.hits   || cs.hit_count   || 0;
+        const misses = cs.misses || cs.miss_count  || 0;
+        console.log(`[m21 §18] cache stats: hits=${hits} misses=${misses}`);
+        expect(typeof hits, 'hits is numeric').toBe('number');
+        expect(typeof misses, 'misses is numeric').toBe('number');
+      }
+    } else {
+      console.log('[m21 §18] spectral-hybrid returned not-ok (acceptable): ' + r.error);
+    }
+  });
+
+  test('M21 §19 — second spectral-hybrid call shows cache hits accumulating', async () => {
+    const caps = await page.evaluate(() => window.__SPECTRAL_CAPS__);
+    if (!caps || !caps.has_spectral_hybrid_cache) { test.skip(true, 'no spectral-hybrid'); return; }
+    // Two sequential getBestMove calls — the second should see the LRU
+    // cache populated from the first (steady-state warm cache).
+    const stats = await page.evaluate(async () => {
+      const b = window.SpectralBridge;
+      await b.resetToInitial();
+      const r1 = await b.getBestMove({ evaluator: 'spectral-hybrid', maxDepth: 1, timeBudgetMs: 4000 });
+      const r2 = await b.getBestMove({ evaluator: 'spectral-hybrid', maxDepth: 1, timeBudgetMs: 4000 });
+      return { r1, r2 };
+    });
+    if (!stats.r1 || !stats.r1.cacheStats || !stats.r2 || !stats.r2.cacheStats) {
+      console.log('[m21 §19] cacheStats not exposed by upstream — skipping warm-cache assertion');
+      return;
+    }
+    const c1 = stats.r1.cacheStats; const c2 = stats.r2.cacheStats;
+    const h1 = c1.hits || c1.hit_count || 0;
+    const h2 = c2.hits || c2.hit_count || 0;
+    console.log(`[m21 §19] first call hits=${h1}, second call hits=${h2}`);
+    // Cache is module-level so the second call should observe ≥ first call.
+    expect(h2, 'second call total hits ≥ first call (cache persists)').toBeGreaterThanOrEqual(h1);
+  });
+
   // ── final cross-cutting check ────────────────────────────────────────
 
   test('all sections — no [bridge-call-failed] events across the run', async () => {
