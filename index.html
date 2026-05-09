@@ -76,6 +76,7 @@
         'js/spectral_pv.js',
         'js/spectral_eval_breakdown.js',
         'js/spectral_measure_panel.js',
+        'js/spectral_entanglement.js',
         'js/spectral_sheet_panel.js',
         'js/spectral_axial_lines.js',
         'js/spectral_isosurfaces.js',
@@ -419,6 +420,29 @@
                     <!-- M20: SheetStateBIP draw predicates (1.10.0 — ALU-queryable) -->
                     <div class="sheet-info-row" id="sheet-draw-row" style="margin-top:4px;border-top:1px solid rgba(0,212,255,0.15);padding-top:4px;"><span class="sheet-label">Draw status</span><span id="sheet-draw-status" style="font-size:10px">—</span></div>
                 </div>
+                <!-- M14.3: entanglement viz. Calls bridge.getEntanglementMap()
+                     which scans every piece via get_density_matrix_of and
+                     colors a halo around each by purity. tr(ρ²) = 1 → pure
+                     (independent), low → entangled. Auto-disabled when
+                     upstream chess-spectral hasn't shipped the implementation
+                     yet (NotImplementedError detected at boot, layer hides). -->
+                <div class="spectral-control spectral-m10" id="entanglement-row">
+                    <label title="Per-piece entanglement halo. Calls get_density_matrix_of for every piece, colors by purity = tr(ρ²). Green = pure / independent state, red = highly entangled with the rest of ψ. Disabled when upstream chess-spectral hasn't shipped the implementation yet.">
+                        <input type="checkbox" id="entanglement-toggle">
+                        Entanglement halo (purity)
+                    </label>
+                </div>
+                <!-- M14.4c: route postCollapsePsi from measureAt into the QM
+                     density / current viz layers. After a Born-rule measurement,
+                     the wavefunction collapses; this option shows what the
+                     density looks like AFTER that collapse instead of the
+                     natural state-derived ψ. Until the next move resets it. -->
+                <div class="spectral-control spectral-m10" id="post-collapse-row">
+                    <label title="When a measurement is made via the panel below, route the post-collapse ψ through the QM density / current viz layers. Density tint shows |ψ_post|² instead of the natural-state density. Reverts on the next move. Probability-current arrows update only if upstream chess-spectral ships get_probability_current_from_psi.">
+                        <input type="checkbox" id="post-collapse-route">
+                        Route post-collapse ψ to viz (after measurement)
+                    </label>
+                </div>
                 <!-- M14.5: principal-variation ghost-arrow overlay. Engine bot
                      (engine-* strategies, M13.4) returns SearchResult.pv —
                      the predicted line of play. Each ply rendered as a colored
@@ -666,7 +690,7 @@
                     </dl>
 
                     <p><strong>8. Bot strategies</strong> (Bot Strategy card on left panel) <span class="spectral-help-tag">M13.1, M13.2</span></p>
-                    <p>Each side picks a decision matrix independently. Try ``smart`` vs ``random`` to see how much edge alpha-beta search has; ``aggressive`` vs ``defensive`` for stylistic contrast. Live-switchable mid-game. URL flags <code>?botWhite=NAME&amp;botBlack=NAME</code>.</p>
+                    <p>Each side picks a decision matrix independently. Try ``engine-spectral`` vs ``engine-material`` to see whether channel-energy eval beats material counting; ``aggressive`` vs ``defensive`` for stylistic contrast. Live-switchable mid-game. URL flags <code>?botWhite=NAME&amp;botBlack=NAME</code>. M13.5 retired the JS-side ``smart`` strategy; ``?bot=smart`` now aliases to engine-material.</p>
 
                     <p><strong>9. Game I/O</strong> <span class="spectral-help-tag">M11.6, M11.6.1</span></p>
                     <p>Export game (JSON) writes chess-spectral's JSONL fixture format + a moves array. Load game (JSON) reads the same back — replays each move so the live state matches.</p>
@@ -705,7 +729,7 @@
                         </select>
                     </div>
                     <p class="spectral-hint" id="bot-strategy-hint" style="margin-top: 4px;">
-                        Different strategies = different play styles. Try ``smart`` vs ``aggressive`` for a real game; try ``random`` as a control.
+                        Different strategies = different play styles. Try ``engine-spectral`` vs ``engine-material`` for a real game; ``random`` as a control.
                     </p>
                     <!-- M11.28a: bot visual-pacing slider. Reduces the after-compute
                          visual hold; compute time itself is unaffected. -->
@@ -716,9 +740,9 @@
                         </label>
                         <input type="range" id="bot-pacing-slider" min="100" max="2000" step="50" value="1200"
                                aria-label="Bot visual pacing in milliseconds"
-                               title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. NOTE: 'smart' strategy still freezes the page (JS-side iterative deepening on main thread). The new 'engine-*' strategies (cs1.6+) run in the Pyodide worker and DO NOT freeze the page — prefer those for any long-running bot match." />
+                               title="Lower values = bot moves appear faster after the bot has finished thinking. Compute time itself is NOT changed by this slider. The 'engine-*' strategies (cs1.6+) run in the Pyodide worker and don't freeze the page during search." />
                         <p class="spectral-hint" style="margin-top: 4px; font-size: 0.85em;">
-                            'smart' strategy freezes the page during deep search (JS main thread). The 'engine-material', 'engine-spectral', and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches.
+                            The 'engine-material', 'engine-spectral', and 'engine-qm' strategies run in the Pyodide Web Worker so the page stays responsive — recommended for bot vs bot matches. (M13.5 retired the JS-side 'smart' strategy; ?bot=smart aliases to engine-material.)
                         </p>
                     </div>
                     <!-- M13.4.2: engine think-time slider. Caps how long
@@ -1912,6 +1936,52 @@
         apply();
         box.addEventListener('change', function () {
           apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
+    <!-- M14.3: entanglement halo checkbox. URL flag ?entanglement=1 + localStorage.
+         Auto-disables itself if upstream get_density_matrix_of isn't implemented. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('entanglement-toggle');
+        if (!box) return;
+        var KEY = 'chess4d-oc.entanglement';
+        var initial = null;
+        try {
+          var u = new URLSearchParams(location.search).get('entanglement');
+          if (u === '1' || u === 'on') initial = true;
+          if (initial === null) {
+            var v = localStorage.getItem(KEY);
+            if (v === '1') initial = true; else if (v === '0') initial = false;
+          }
+        } catch (_) {}
+        if (initial !== null) box.checked = initial;
+        function apply() {
+          if (window.SpectralEntanglement) window.SpectralEntanglement.setEnabled(box.checked);
+        }
+        apply();
+        box.addEventListener('change', function () {
+          apply();
+          try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
+        });
+      });
+    </script>
+
+    <!-- M14.4c: post-collapse-route checkbox.
+         When checked, measureAt() routes the post-collapse ψ through the QM
+         density / current viz layers. Persisted to localStorage. -->
+    <script>
+      window.addEventListener('chess4d-app-ready', function () {
+        var box = document.getElementById('post-collapse-route');
+        if (!box) return;
+        var KEY = 'chess4d-oc.post-collapse-route';
+        try {
+          var v = localStorage.getItem(KEY);
+          if (v === '1') box.checked = true;
+        } catch (_) {}
+        box.addEventListener('change', function () {
           try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (_) {}
         });
       });

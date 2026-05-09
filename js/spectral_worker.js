@@ -904,6 +904,105 @@ _do_get_sheet_state()
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 
+  // ───────────────────────────────────────────────────────────────────
+  // M20.1 — getCapabilities probe (chess-spectral feature introspection)
+  //
+  // Single Python introspection pass that asks: "what's installed, what
+  // works, what raises NotImplementedError?" Returns a flat dict of
+  // capability flags so the JS viz layer can wire features defensively
+  // without retrying every call:
+  //   has_sheet_state, has_sheet_state_bip, has_encoder_bip_hybrid,
+  //   has_phase_alu, has_density_matrix_of (true even if it raises NIE —
+  //   import works but call may not), density_matrix_implemented (true iff
+  //   actually returns a result), has_density_from_psi, has_current_from_psi
+  //
+  // Cached at boot in window.__SPECTRAL_CAPS__ via the bridge so subsequent
+  // viz code can read synchronously.
+  // ───────────────────────────────────────────────────────────────────
+  getCapabilities() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_get_capabilities():
+    caps = {}
+    # 1.9 SheetState (float, 11-dim)
+    try:
+        from chess_spectral import SheetState
+        caps['has_sheet_state'] = True
+    except Exception:
+        caps['has_sheet_state'] = False
+    # 1.10 SheetStateBIP (3-byte, ALU-queryable)
+    try:
+        from chess_spectral import SheetStateBIP
+        caps['has_sheet_state_bip'] = True
+    except Exception:
+        caps['has_sheet_state_bip'] = False
+    # 1.11 phase-alu pseudo-legal generator
+    try:
+        from chess_spectral.phase_operators_4d import phase_only_pseudo_legal_moves
+        caps['has_phase_alu'] = True
+    except Exception:
+        caps['has_phase_alu'] = False
+    # 1.12 BIP-hybrid encoder
+    try:
+        from chess_spectral import encode_4d_bip_hybrid
+        caps['has_encoder_bip_hybrid'] = True
+    except Exception:
+        caps['has_encoder_bip_hybrid'] = False
+    # density / current from raw ψ (Tier 2.1 wishlist — chess-spectral 1.9+)
+    try:
+        from chess_spectral.qm_4d_bridge import get_qm_density_from_psi
+        caps['has_density_from_psi'] = True
+    except Exception:
+        caps['has_density_from_psi'] = False
+    try:
+        from chess_spectral.qm_4d_bridge import get_probability_current_from_psi
+        caps['has_current_from_psi'] = True
+    except Exception:
+        caps['has_current_from_psi'] = False
+    # Density matrix: importable always (placeholder may exist), but may raise
+    # NotImplementedError on call. Probe by actually invoking on the current
+    # state; if NIE, set density_matrix_implemented=False.
+    try:
+        from chess_spectral.qm_4d_bridge import get_density_matrix_of as _gdm
+        caps['has_density_matrix_of'] = True
+    except Exception:
+        caps['has_density_matrix_of'] = False
+        caps['density_matrix_implemented'] = False
+    if caps.get('has_density_matrix_of'):
+        try:
+            gs4 = _get_qm_state_obj()
+            if gs4 is None:
+                caps['density_matrix_implemented'] = None  # can't probe
+            else:
+                _ = _gdm(gs4, piece_id=0)
+                caps['density_matrix_implemented'] = True
+        except NotImplementedError:
+            caps['density_matrix_implemented'] = False
+        except Exception as e:
+            # Implemented but errored on this state — treat as implemented.
+            caps['density_matrix_implemented'] = True
+            caps['density_matrix_probe_note'] = f'{type(e).__name__}: {e}'
+    # Encoding dim runtime constant
+    try:
+        from chess_spectral.encoder_4d import ENCODING_DIM
+        caps['encoding_dim'] = int(ENCODING_DIM)
+    except Exception:
+        caps['encoding_dim'] = 45056
+    # Version string for telemetry
+    try:
+        import importlib.metadata as _m
+        caps['chess_spectral_version'] = _m.version('chess-spectral')
+    except Exception:
+        caps['chess_spectral_version'] = None
+    return {'ok': True, 'caps': caps}
+_do_get_capabilities()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
   // Returns the current encoding dimensions:
   //   { base: 45056, withSheets: 45067 }
   // Use this instead of hardcoding. When the bit-serialized resonant HDC
@@ -1257,6 +1356,112 @@ _do_get_qm_density()
       .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 
+  // ───────────────────────────────────────────────────────────────────
+  // M14.4c — density / current from a raw ψ (chess-spectral 1.9+ Tier 2.1)
+  //
+  // Same return shape as getQmDensity / getProbabilityCurrent but takes a
+  // 90112-float real+imag interleaved ψ array as input instead of the
+  // current state. Use case: post-measurement visualization. measureAt()
+  // returns postCollapsePsi (the wavefunction after Born-rule collapse
+  // at the measured cell); these handlers render the density and current
+  // OF THAT post-collapse state, not the natural state-derived ψ.
+  //
+  // Implementation strategy: probe upstream qm_4d_bridge for native helpers
+  // (get_qm_density_from_psi / get_probability_current_from_psi). If not
+  // present, fall back to JS-side computation:
+  //   density[c] = Σ over 11 channels: |ψ[c, ch]|²
+  //              = Σ ch: psi[2*(ch*4096+c)]² + psi[2*(ch*4096+c)+1]²
+  // The current (j) field needs ∇ψ which requires neighbor-cell access in
+  // the basis — that's a chess-spectral internal computation we can't
+  // reproduce JS-side, so it returns ok=false on fallback.
+  // ───────────────────────────────────────────────────────────────────
+
+  getQmDensityFromPsi(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const psi = args && args.psi;
+    if (!psi || psi.length !== 90112) {
+      return Promise.resolve({ ok: false, error: 'psi must be Float32Array(90112)' });
+    }
+    pyodide.globals.set('_psi_arg', psi);
+    return pyodide
+      .runPython(
+        `
+def _do_density_from_psi():
+    try:
+        import numpy as _np
+        psi_flat = _np.asarray(list(_psi_arg), dtype=_np.float32)
+        if psi_flat.size != 90112:
+            return {'ok': False, 'error': f'expected psi length 90112, got {psi_flat.size}'}
+        # Try upstream native helper first (chess-spectral 1.9+ Tier 2.1).
+        try:
+            from chess_spectral.qm_4d_bridge import get_qm_density_from_psi as _gqdp
+            r = _gqdp(psi_flat)
+            return r
+        except (ImportError, AttributeError):
+            pass
+        # Fallback: compute |ψ|² per cell from the interleaved real+imag layout.
+        # Layout: psi[2k] = Re(ψ_k), psi[2k+1] = Im(ψ_k), k = 0..45055
+        # 45056 = 11 channels × 4096 cells; for each cell c, sum over 11 channels:
+        #   density[c] = Σ_ch (Re² + Im²) at index k = ch*4096 + c
+        re = psi_flat[0::2]  # length 45056
+        im = psi_flat[1::2]
+        amp_sq = re * re + im * im  # 45056
+        # Sum over the 11 channels (each contributes 4096 cells).
+        amp_sq_2d = amp_sq.reshape((11, 4096))
+        density = amp_sq_2d.sum(axis=0).astype('float32')
+        # Born-rule normalization sanity: density should sum to ≈1.0 if ψ is normalized.
+        return {
+            'ok': True,
+            'density': [float(v) for v in density],
+            'source': 'js-side-fallback (no get_qm_density_from_psi)',
+        }
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_density_from_psi()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
+  getProbabilityCurrentFromPsi(args) {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    const psi = args && args.psi;
+    if (!psi || psi.length !== 90112) {
+      return Promise.resolve({ ok: false, error: 'psi must be Float32Array(90112)' });
+    }
+    pyodide.globals.set('_psi_arg', psi);
+    return pyodide
+      .runPython(
+        `
+def _do_current_from_psi():
+    # ∇ψ requires basis-internal knowledge that lives in chess-spectral.
+    # Probe for the native helper; if absent, return ok=false (no JS fallback).
+    try:
+        from chess_spectral.qm_4d_bridge import get_probability_current_from_psi as _gpcp
+    except (ImportError, AttributeError) as _e:
+        return {
+            'ok': False,
+            'error': 'get_probability_current_from_psi unavailable upstream',
+            'source': 'no-native-helper',
+        }
+    try:
+        import numpy as _np
+        psi_flat = _np.asarray(list(_psi_arg), dtype=_np.float32)
+        r = _gpcp(psi_flat)
+        # Mirror the getProbabilityCurrent flatten contract.
+        if isinstance(r, dict) and 'j' in r:
+            j = _np.asarray(r['j'])
+            if j.ndim > 1:
+                r['j'] = j.flatten().astype('float32').tolist()
+        return r
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+_do_current_from_psi()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
+  },
+
   // Apply a unitary move operator to the current ψ. PREVIEW-style
   // (M11.28): does NOT mutate our chess4d state. Returns the assembled
   // post-move ψ for visualization / measurement / single-move analysis.
@@ -1358,11 +1563,18 @@ _do_measure_at()
   },
 
   // Reduced density matrix ρ_piece for one piece. Args: { pieceId: int }
-  // Returns: { ok, rho: ComplexMatrix, purity, rank }
+  // Returns: { ok, rho, purity, rank, dim, implemented }
   //
-  // pieceId convention follows chess_spectral_4d's piece-listing order
-  // (0..N-1 for the current state). For entanglement viz: tr(ρ²) = purity
-  // ∈ [1/d, 1]; rank > 1 indicates the piece is entangled with others.
+  // M14.3: pieceId convention follows chess_spectral_4d's piece-listing order
+  // (0..N-1 for the current state). For entanglement viz:
+  //   purity = tr(ρ²) ∈ [1/d, 1]   — pure state = 1, max-mixed = 1/d
+  //   rank > 1                      — piece is entangled with others
+  //
+  // Pre-1.9.0 this raised NotImplementedError upstream. We catch that case
+  // explicitly and report `implemented: false` so the JS viz layer can
+  // gracefully degrade. When upstream ships the implementation, the rho
+  // matrix is serialized through real/imag flat arrays so it crosses the
+  // bridge cleanly (Pyodide's complex64 doesn't auto-marshal).
   getDensityMatrixOf(args) {
     if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
     const pieceId = (args && Number.isFinite(args.pieceId)) ? args.pieceId : 0;
@@ -1374,19 +1586,154 @@ def _do_get_density_matrix():
     try:
         from chess_spectral.qm_4d_bridge import get_density_matrix_of as _gdm
     except Exception as e:
-        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}'}
+        return {'ok': False, 'error': f'qm_4d_bridge import failed: {type(e).__name__}: {e}', 'implemented': False}
     gs4 = _get_qm_state_obj()
     if gs4 is None:
-        return {'ok': False, 'error': 'chess_spectral_4d state translation failed'}
+        return {'ok': False, 'error': 'chess_spectral_4d state translation failed', 'implemented': True}
     try:
         r = _gdm(gs4, piece_id=int(_dm_pid))
-        return r
+    except NotImplementedError as e:
+        return {
+            'ok': False,
+            'error': f'NotImplementedError: {e}',
+            'implemented': False,
+            'reason': 'upstream chess-spectral has not shipped get_density_matrix_of yet',
+        }
     except Exception as e:
-        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}', 'implemented': True}
+    # Serialize the result through plain numbers so the bridge can transport it.
+    try:
+        import numpy as _np
+        rho = r.get('rho') if isinstance(r, dict) else None
+        purity = r.get('purity') if isinstance(r, dict) else None
+        rank   = r.get('rank')   if isinstance(r, dict) else None
+        out = {
+            'ok': True,
+            'implemented': True,
+            'purity': float(purity) if purity is not None else None,
+            'rank':   int(rank)     if rank   is not None else None,
+        }
+        if rho is not None:
+            arr = _np.asarray(rho)
+            out['dim'] = int(arr.shape[0]) if arr.ndim >= 1 else 0
+            # Flatten to row-major real + imag arrays for transport.
+            out['rho_real'] = [float(v) for v in _np.real(arr).flatten()]
+            out['rho_imag'] = [float(v) for v in _np.imag(arr).flatten()]
+        return out
+    except Exception as e:
+        # Density matrix returned but serialization failed — surface the
+        # upstream result keys as best we can.
+        return {
+            'ok': False,
+            'error': f'serialization failed: {type(e).__name__}: {e}',
+            'implemented': True,
+            'raw_keys': list(r.keys()) if isinstance(r, dict) else None,
+        }
 _do_get_density_matrix()
 `
       )
       .toJs({ dict_converter: Object.fromEntries, depth: 6 });
+  },
+
+  // M14.3: batched entanglement scan. Calls get_density_matrix_of for every
+  // piece in the current state and returns a flat array of {piece_id, sq,
+  // type, color, purity, rank} entries. Used by the entanglement viz layer
+  // to color pieces by purity (1 = pure, low = highly entangled).
+  // Returns { ok, implemented, pieces: [{...}], min_purity, max_purity }
+  // or { ok: false, implemented: false } if upstream get_density_matrix_of
+  // raises NotImplementedError.
+  getEntanglementMap() {
+    if (status !== 'ready') throw new Error(`Worker not ready (status=${status})`);
+    return pyodide
+      .runPython(
+        `
+def _do_entanglement_map():
+    try:
+        from chess_spectral.qm_4d_bridge import get_density_matrix_of as _gdm
+    except Exception as e:
+        return {'ok': False, 'error': f'import failed: {e}', 'implemented': False}
+    gs4 = _get_qm_state_obj()
+    if gs4 is None:
+        return {'ok': False, 'error': 'no QM state', 'implemented': True}
+    pieces_out = []
+    nie_seen = False
+    # Enumerate pieces via iter_pieces (1.8+) or pieces_of fallback.
+    piece_id = 0
+    try:
+        # Build a piece list with sq + char so the JS layer can colorize.
+        # iter_pieces yields (sq_idx, piece_value) pairs in encoder order.
+        if callable(getattr(_state, 'iter_pieces', None)):
+            piece_iter = list(_state.iter_pieces())
+        else:
+            # Fallback: walk both colors via board.pieces_of
+            piece_iter = []
+            for col in (Color.WHITE, Color.BLACK):
+                for sq, p in _state.board.pieces_of(col):
+                    sq_idx = (int(sq.x) << 9) | (int(sq.y) << 6) | (int(sq.z) << 3) | int(sq.w)
+                    pchar = _PIECE_CHAR.get(p.piece_type, '?')
+                    if col == Color.BLACK: pchar = pchar.lower()
+                    piece_iter.append((sq_idx, pchar))
+    except Exception as e:
+        return {'ok': False, 'error': f'piece enumeration failed: {e}', 'implemented': True}
+
+    purities = []
+    for sq_idx, piece_value in piece_iter:
+        try:
+            r = _gdm(gs4, piece_id=int(piece_id))
+        except NotImplementedError:
+            nie_seen = True
+            break
+        except Exception as e:
+            piece_id += 1
+            continue
+        purity = None
+        rank = None
+        if isinstance(r, dict):
+            purity = r.get('purity')
+            rank   = r.get('rank')
+        try:
+            purity = float(purity) if purity is not None else None
+            rank   = int(rank)     if rank   is not None else None
+        except Exception:
+            pass
+        sq = (int(sq_idx) >> 9 & 7, int(sq_idx) >> 6 & 7, int(sq_idx) >> 3 & 7, int(sq_idx) & 7)
+        # Decode piece value (may be a char or (char, axis) tuple from iter_pieces)
+        if isinstance(piece_value, tuple):
+            char = piece_value[0]
+        else:
+            char = str(piece_value)
+        is_white = char.isupper()
+        pieces_out.append({
+            'piece_id': piece_id,
+            'sq': {'x': sq[0], 'y': sq[1], 'z': sq[2], 'w': sq[3]},
+            'char': char.upper(),
+            'team': 0 if is_white else 1,
+            'purity': purity,
+            'rank': rank,
+        })
+        if purity is not None:
+            purities.append(purity)
+        piece_id += 1
+
+    if nie_seen:
+        return {
+            'ok': False,
+            'implemented': False,
+            'error': 'get_density_matrix_of raised NotImplementedError',
+            'reason': 'upstream chess-spectral has not shipped the implementation yet',
+        }
+    return {
+        'ok': True,
+        'implemented': True,
+        'pieces': pieces_out,
+        'count': len(pieces_out),
+        'min_purity': min(purities) if purities else None,
+        'max_purity': max(purities) if purities else None,
+    }
+_do_entanglement_map()
+`
+      )
+      .toJs({ dict_converter: Object.fromEntries, depth: 5 });
   },
 
   // Probability-current field j_p(c) = Im(ψ* ∇ψ).

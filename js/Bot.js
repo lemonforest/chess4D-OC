@@ -698,34 +698,27 @@ const Bot = {
     },
 
     // ────────────────────────────────────────────────────────────────────────
-    // M13.1 — SMART-MODE SEARCH (iterative deepening alpha-beta + transposition
-    //          table + move ordering). Gated behind ?bot=smart URL flag.
+    // M13.5 (2026-05-08): JS-side `smart` strategy retired.
     //
-    // The default getBestMove path above does single-ply lookahead with
-    // handcrafted heuristics + 30%-randomized top moves. That produces
-    // playable but shallow moves. M13.1 adds a deeper search that uses
-    // standard 2D-engine techniques (all of which port to 4D unchanged):
+    // The JS-side iterative-deepening alpha-beta + TT + MVV-LVA search shipped
+    // in M13.1 was a useful bootstrap but had two persistent problems:
+    //   1. It froze the page during deep search (synchronous main-thread work
+    //      with cooperative yields only between depth iterations — the inner
+    //      _alphaBeta call still blocked rendering).
+    //   2. Its evaluator was material-only; the engine-* strategies (M13.4,
+    //      cs1.6+) run inside the Pyodide worker AND have three richer eval
+    //      flavors (material / spectral / qm) without freezing the page.
     //
-    //   - Iterative deepening: ply 1, 2, ... up to maxDepth or timeBudget
-    //   - Alpha-beta pruning: cut subtrees that can't improve the bound
-    //   - Move ordering (MVV-LVA): try captures of higher-value pieces
-    //     first so beta cutoffs fire as early as possible
-    //   - Transposition table: skip re-evaluating positions reached by
-    //     transposition (multiple move orders → same position)
-    //   - Material+mobility position eval (same heuristic as v0)
-    //
-    // Branching factor in 4D chess is ~60-100 per side, so with good
-    // move ordering alpha-beta evaluates ~sqrt(N) of the tree → 2-ply
-    // is in the 60-100 effective leaf range, very tractable.
-    //
-    // Future M13.2 (filed): replace material+mobility eval with chess-
-    // spectral channel-energy weighted sum. Async path, follow-up PR.
+    // M13.5 removes the JS smart code path entirely. The `smart` registry
+    // entry is gone; `?bot=smart` URL flag now aliases to engine-material
+    // with a one-release deprecation warn. getBestMoveSmart, _alphaBeta,
+    // _yieldToMain are deleted. evaluatePosition + _PIECE_VALUES are kept
+    // since aggressive/defensive/center heuristic strategies still use them.
     // ────────────────────────────────────────────────────────────────────────
 
-    smartMode: false,
     // M11.24 — kept as Bot._PIECE_VALUES for backward-compat with the
-    // four call sites (evaluatePosition, evaluatePositionSpectral,
-    // getBestMoveWeighted, etc.). Sourced from window.BOT.PIECE_VALUES.
+    // call sites (evaluatePosition, evaluatePositionSpectral, _weightedHeuristicMove).
+    // Sourced from window.BOT.PIECE_VALUES.
     _PIECE_VALUES: window.BOT.PIECE_VALUES,
 
     /**
@@ -840,126 +833,10 @@ const Bot = {
         gameBoard.pieces[move.x1][move.y1][move.z1][move.w1] = captured;
     },
 
-    /**
-     * Alpha-beta search. Returns { score, move } where score is from
-     * `searchTeam`'s perspective (always maximizing). Calls itself
-     * recursively, swapping team and negating the recursive score
-     * (negamax form). Bails (returns null) if the timeBudget expires —
-     * caller falls back to the previous iterative-deepening result.
-     */
-    _alphaBeta: function (gameBoard, team, searchTeam, depth, alpha, beta, tt, deadline) {
-        if (typeof performance !== 'undefined' && performance.now() > deadline) return null;
-        if (depth === 0) {
-            return { score: Bot.evaluatePosition(gameBoard, searchTeam), move: null };
-        }
-        const ttKey = depth + '|' + Bot.positionHash(gameBoard, team);
-        const cached = tt.get(ttKey);
-        if (cached) return cached;
-        const moves = Bot.generateOrderedMoves(gameBoard, team);
-        if (moves.length === 0) {
-            // Checkmate or stalemate. Use the existing inCheck check.
-            const inCheck = gameBoard.inCheck && gameBoard.inCheck(team);
-            const score = inCheck
-                ? (team === searchTeam ? -window.BOT.SCORES.CHECKMATE : window.BOT.SCORES.CHECKMATE)
-                : 0;
-            return { score: score, move: null };
-        }
-        let bestScore = -Infinity;
-        let bestMove = null;
-        const maximizing = (team === searchTeam);
-        for (const m of moves) {
-            const captured = Bot._applyTemp(gameBoard, m);
-            const sub = Bot._alphaBeta(gameBoard, 1 - team, searchTeam, depth - 1, -beta, -alpha, tt, deadline);
-            Bot._undoTemp(gameBoard, m, captured);
-            if (sub === null) return null; // timeout
-            // Negamax: child returns from team's perspective; flip sign for opponent's eval.
-            const subScore = maximizing ? sub.score : -sub.score;
-            if (subScore > bestScore) {
-                bestScore = subScore;
-                bestMove = m;
-            }
-            if (bestScore > alpha) alpha = bestScore;
-            if (alpha >= beta) break; // beta cutoff
-        }
-        const result = { score: bestScore, move: bestMove };
-        tt.set(ttKey, result);
-        return result;
-    },
-
-    /**
-     * Iterative-deepening driver. Searches depth 1, 2, ... up to
-     * maxDepth or until timeBudgetMs elapses. Returns the best move
-     * from the deepest completed iteration.
-     *
-     * M11.28a: now async with cooperative yields between depth
-     * iterations so the browser can paint at least once per pass and
-     * the busy-spinner GPU compositor stays responsive. The yield uses
-     * scheduler.postTask({priority: 'user-visible'}) on supported
-     * browsers (Chrome/Edge 94+) and falls back to setTimeout(0) on
-     * Firefox/Safari. Note: this does NOT make the search itself
-     * non-blocking — a single deep _alphaBeta still freezes the main
-     * thread for its duration. The complete fix is M13.4 (chess-spectral
-     * 1.6 engine cutover, search runs in Pyodide worker).
-     */
-    getBestMoveSmart: async function (gameBoard, team, opts) {
-        opts = opts || {};
-        const maxDepth = Number.isFinite(opts.maxDepth) ? opts.maxDepth : 3;
-        const timeBudgetMs = Number.isFinite(opts.timeBudgetMs) ? opts.timeBudgetMs : 4000;
-        const startTime = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-        const deadline = startTime + timeBudgetMs;
-        const tt = new Map();
-        let bestMove = null;
-        let bestScore = -Infinity;
-        let lastDepthCompleted = 0;
-        for (let d = 1; d <= maxDepth; d++) {
-            const result = Bot._alphaBeta(gameBoard, team, team, d, -Infinity, Infinity, tt, deadline);
-            if (result === null) break; // timed out
-            bestMove = result.move;
-            bestScore = result.score;
-            lastDepthCompleted = d;
-            // Yield between depth iterations so the browser gets to
-            // paint and process input. Skipped at maxDepth so we don't
-            // pay an unnecessary microtask boundary on the last loop.
-            if (d < maxDepth) {
-                await Bot._yieldToMain();
-                // After the yield, re-check the deadline — the user might
-                // have eaten budget on a long animation frame.
-                if (((typeof performance !== 'undefined') ? performance.now() : Date.now()) > deadline) break;
-            }
-        }
-        const elapsed = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - startTime;
-        console.log(
-            '[m13.1/bot] smart search: depth=' + lastDepthCompleted + '/' + maxDepth +
-            ' score=' + bestScore + ' tt-entries=' + tt.size +
-            ' time=' + elapsed.toFixed(0) + 'ms'
-        );
-        return bestMove;
-    },
-
-    /**
-     * Yield to the main thread between depth iterations. Uses the
-     * scheduler API where available (Chrome/Edge 94+) so the browser
-     * can prioritize user input over background bot CPU; falls back
-     * to setTimeout(0) on Firefox/Safari which still gives one
-     * animation-frame of breathing room.
-     *
-     * Priority 'user-visible' is the middle tier — bot work should
-     * keep flowing but yield to user input. 'background' would starve
-     * under load; 'user-blocking' would defeat the point.
-     */
-    _yieldToMain: function () {
-        return new Promise(function (resolve) {
-            if (typeof globalThis !== 'undefined'
-                && globalThis.scheduler
-                && typeof globalThis.scheduler.postTask === 'function') {
-                try {
-                    globalThis.scheduler.postTask(resolve, { priority: 'user-visible' });
-                    return;
-                } catch (_) { /* fall through to setTimeout */ }
-            }
-            setTimeout(resolve, 0);
-        });
-    },
+    // M13.5: _alphaBeta, getBestMoveSmart, _yieldToMain removed.
+    // Use ?botWhite=engine-material (or engine-spectral / engine-qm) instead.
+    // The engine-* strategies run inside the Pyodide worker so the JS main
+    // thread stays responsive during search.
 };
 
 // ────────────────────────────────────────────────────────────────────────
@@ -976,15 +853,17 @@ const Bot = {
 // HOW they pick the move from the legal-move set.
 //
 // Available strategies (extensible — add more by registering on Bot.strategies):
-//   - 'v0'         : the original single-ply heuristic + top-30% randomization
-//   - 'smart'      : iterative-deepening alpha-beta + transposition table (M13.1)
-//   - 'random'     : uniform random over legal moves (control / baseline)
-//   - 'aggressive' : capture value × 5 — chases material, ignores safety
-//   - 'defensive'  : penalty for under-attack destinations × 5 — avoids danger
-//   - 'center'     : center bonus × 5 — fights for the lattice center
+//   - 'v0'              : original single-ply heuristic + top-30% randomization
+//   - 'random'          : uniform random over legal moves (control / baseline)
+//   - 'aggressive'      : capture value × 5 — chases material, ignores safety
+//   - 'defensive'       : penalty for under-attack destinations × 5 — avoids danger
+//   - 'center'          : center bonus × 5 — fights for the lattice center
+//   - 'engine-material' : Pyodide alpha-beta + TT, material eval (cs1.6+)
+//   - 'engine-spectral' : Pyodide alpha-beta + TT, spectral eval (cs1.6+)
+//   - 'engine-qm'       : Pyodide alpha-beta + TT, Born-rule QM eval (cs1.6+)
 //
-// Future M13.3 will add 'spectral-eval' once the async chess-spectral
-// channel-energy weighted-sum eval is wired up.
+// M13.5 (2026-05-08): 'smart' retired (JS-side alpha-beta froze the main
+// thread). engine-* strategies are the recommended replacement.
 // ────────────────────────────────────────────────────────────────────────
 
 Bot._randomLegalMove = function (gameBoard, team) {
@@ -1065,10 +944,9 @@ Bot.strategies = {
         label: 'Handcrafted heuristic (v0)',
         getBestMove: function (gb, team) { return Bot.getBestMove(gb, team); },
     },
-    smart: {
-        label: 'Alpha-beta + TT (depth 3)',
-        getBestMove: function (gb, team) { return Bot.getBestMoveSmart(gb, team); },
-    },
+    // M13.5: 'smart' retired (was JS-side alpha-beta + TT). Use engine-material /
+    // engine-spectral / engine-qm instead — they run in the Pyodide worker
+    // and don't freeze the page.
     random: {
         label: 'Random legal move (control)',
         getBestMove: function (gb, team) { return Bot._randomLegalMove(gb, team); },
@@ -1293,24 +1171,43 @@ Bot.getActiveStrategyName = function (team) {
     return Bot.activeStrategy[team] || 'v0';
 };
 
-// M13.1 + M13.2 boot-time URL-flag handling.
-//   ?bot=smart            → backward-compatibility: enables smart for BOTH sides
+// M13.1 + M13.2 + M13.5 boot-time URL-flag handling.
+//   ?bot=smart            → DEPRECATED, aliases to engine-material with warn (M13.5)
 //   ?botWhite=NAME        → set white's strategy
 //   ?botBlack=NAME        → set black's strategy
 try {
     if (typeof window !== 'undefined') {
         const params = new URLSearchParams(location.search);
         const legacy = params.get('bot');
-        if (legacy === 'smart') {
-            Bot.smartMode = true;
-            // M13.2: also write into the per-team registry for symmetry.
-            Bot.activeStrategy = { 0: 'smart', 1: 'smart' };
-            console.log('[m13.1/bot] smart mode enabled (?bot=smart, both sides)');
+        if (legacy === 'smart' || legacy === 'engine-material') {
+            const target = 'engine-material';
+            Bot.activeStrategy = { 0: target, 1: target };
+            if (legacy === 'smart') {
+                console.warn(
+                    '[m13.5/bot] ?bot=smart is deprecated; aliasing to engine-material. ' +
+                    'The JS-side alpha-beta search was retired in M13.5 — engine-* runs in ' +
+                    'the Pyodide worker and does not freeze the page. ' +
+                    'Use ?botWhite=engine-material&botBlack=engine-material in the future.'
+                );
+            } else {
+                console.log('[m13.4/bot] engine-material enabled (?bot=engine-material, both sides)');
+            }
         }
         const botWhite = params.get('botWhite');
         const botBlack = params.get('botBlack');
-        if (botWhite) Bot.setStrategy(0, botWhite);
-        if (botBlack) Bot.setStrategy(1, botBlack);
+        // M13.5: redirect 'smart' aliases to engine-material on the per-team flags too.
+        if (botWhite === 'smart') {
+            console.warn('[m13.5/bot] ?botWhite=smart deprecated → engine-material');
+            Bot.setStrategy(0, 'engine-material');
+        } else if (botWhite) {
+            Bot.setStrategy(0, botWhite);
+        }
+        if (botBlack === 'smart') {
+            console.warn('[m13.5/bot] ?botBlack=smart deprecated → engine-material');
+            Bot.setStrategy(1, 'engine-material');
+        } else if (botBlack) {
+            Bot.setStrategy(1, botBlack);
+        }
     }
 } catch (_) { /* not in a browser; leave defaults */ }
 

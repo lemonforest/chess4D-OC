@@ -463,13 +463,51 @@
     measureAt: (coord, observable) =>
       applyChain.then(() => call('measureAt', { coord, observable })),
 
-    // Reduced density matrix ρ_piece for one piece. Returns:
-    //   { ok, rho, purity, rank }
+    // M14.3 — reduced density matrix ρ_piece for one piece. Returns:
+    //   { ok, implemented, rho_real, rho_imag, dim, purity, rank }
     // pieceId: 0..N-1 in chess_spectral_4d's piece-listing order.
-    // Used by M14.3 entanglement viz (purity = tr(ρ²); rank > 1 ⇒
-    // piece is entangled with others).
+    // purity = tr(ρ²); rank > 1 ⇒ piece is entangled with others.
+    // ρ is transported as flat real + imag arrays (Pyodide doesn't auto-
+    // marshal complex64). If chess-spectral hasn't shipped the
+    // implementation yet, returns { ok: false, implemented: false }.
     getDensityMatrixOf: (pieceId) =>
       applyChain.then(() => call('getDensityMatrixOf', { pieceId })),
+
+    // M14.3 — batched entanglement scan: get_density_matrix_of for every
+    // piece in the current state, returned as a flat array.
+    //   { ok, implemented, count, pieces: [{piece_id, sq, char, team,
+    //     purity, rank}, ...], min_purity, max_purity }
+    // Used by SpectralEntanglement viz to color pieces by purity.
+    getEntanglementMap: () =>
+      applyChain.then(() => call('getEntanglementMap')),
+
+    // M14.4c — density / current FROM A RAW ψ vector (not the current state).
+    // Use case: post-measurement viz. measureAt() returns postCollapsePsi;
+    // these route that ψ through the same density / current pipeline as
+    // getQmDensity() / getProbabilityCurrent() so the viz can show what
+    // the wavefunction looks like AFTER the Born-rule collapse.
+    //
+    //   getQmDensityFromPsi({ psi: Float32Array(90112) })
+    //     → { ok, density: float[4096], source }
+    //     Falls back to JS-side compute if upstream lacks the helper.
+    //   getProbabilityCurrentFromPsi({ psi: Float32Array(90112) })
+    //     → { ok, j: float[16384] }
+    //     Returns { ok: false, source: 'no-native-helper' } if upstream
+    //     hasn't shipped get_probability_current_from_psi.
+    getQmDensityFromPsi: (psi) =>
+      call('getQmDensityFromPsi', { psi }),
+    getProbabilityCurrentFromPsi: (psi) =>
+      call('getProbabilityCurrentFromPsi', { psi }),
+
+    // M20.1 — capability probe. Single round-trip introspection of upstream
+    // chess-spectral that returns what's installed and what works.
+    //   { ok, caps: { has_sheet_state, has_sheet_state_bip, has_phase_alu,
+    //                 has_encoder_bip_hybrid, has_density_matrix_of,
+    //                 density_matrix_implemented, has_density_from_psi,
+    //                 has_current_from_psi, encoding_dim,
+    //                 chess_spectral_version } }
+    // Cached to window.__SPECTRAL_CAPS__ at boot for synchronous reads.
+    getCapabilities: () => call('getCapabilities'),
 
     // Probability-current vector field j_p(c) = Im(ψ* ∇ψ). Returns:
     //   { ok, j: Float32Array }
@@ -540,8 +578,21 @@
       } catch (err) {
         console.warn('[SpectralBridge] getInitialPositionInfo failed:', err);
       }
+      // M20.1 — cache capabilities at boot so viz layers can branch
+      // synchronously on what's available without a per-call probe.
+      let caps = null;
+      try {
+        const r = await bridge.getCapabilities();
+        if (r && r.ok && r.caps) {
+          caps = r.caps;
+          window.__SPECTRAL_CAPS__ = caps;
+          console.log('[SpectralBridge] capabilities:', caps);
+        }
+      } catch (err) {
+        console.warn('[SpectralBridge] getCapabilities failed:', err);
+      }
 
-      window.__SPECTRAL_INFO__ = { ...info, constants, initialPos };
+      window.__SPECTRAL_INFO__ = { ...info, constants, initialPos, caps };
       window.__SMOKE_READY__ = true;
 
       // Hide the loading overlay (CSS handles fade-out).

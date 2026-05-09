@@ -162,6 +162,17 @@
         console.warn(`[m14.2/qm-current] expected j length ${N_CELLS * 4}, got ${j ? j.length : 'null'}`);
         return;
       }
+      _renderCurrent(j, 'natural');
+    } catch (err) {
+      console.warn('[m14.2/qm-current] refresh error:', err);
+    }
+  }
+
+  // M14.4c — render an arbitrary j vector field. Shared between refresh()
+  // and applyCurrentOverride for post-collapse viz.
+  function _renderCurrent(j, sourceLabel) {
+    if (!lineMesh) return;
+    try {
       // Compute |j| per cell, find percentile threshold for visibility.
       const mags = new Float32Array(N_CELLS);
       for (let idx = 0; idx < N_CELLS; idx++) {
@@ -249,12 +260,12 @@
       lineMesh.visible = enabled;
       if (typeof window !== 'undefined') window.__GAME_DIRTY__ = true;
       console.log(
-        `[m14.2/qm-current] arrows=${segIdx}/${N_CELLS} ` +
+        `[m14.2/qm-current] source=${sourceLabel} arrows=${segIdx}/${N_CELLS} ` +
           `magCutoff=${magCutoff.toExponential(3)} magMax=${magMax.toExponential(3)} ` +
           `threshold=p${(_threshold * 100).toFixed(0)}`
       );
     } catch (err) {
-      console.warn('[m14.2/qm-current] refresh error:', err);
+      console.warn('[m14.2/qm-current] _renderCurrent error:', err);
     }
   }
 
@@ -294,6 +305,23 @@
       if (enabled) refresh();
     },
     refresh,
+    // M14.4c — apply a custom j(c) array (16384 floats). Used by the
+    // post-collapse viz: measureAt() returns postCollapsePsi, the bridge
+    // computes j(c) for that ψ via getProbabilityCurrentFromPsi, and we
+    // route it here. Falls through gracefully if upstream lacks the
+    // get_probability_current_from_psi helper (the routing code in
+    // spectral_measure_panel just doesn't call this).
+    applyCurrentOverride(j) {
+      if (!j || j.length !== N_CELLS * 4) {
+        console.warn(`[m14.2/qm-current] applyCurrentOverride expected ${N_CELLS * 4} floats, got ${j ? j.length : 'null'}`);
+        return;
+      }
+      if (!enabled) {
+        enabled = true;
+        if (lineMesh) lineMesh.visible = true;
+      }
+      _renderCurrent(j, 'post-collapse');
+    },
     isEnabled() { return enabled; },
     getThreshold() { return _threshold; },
   };
