@@ -32,9 +32,13 @@ jobs:
   parity:
     name: Parity diff (JS vs Python)
     runs-on: ubuntu-latest
-    # M20: bumped from 20 → 30 to match parity.spec.js PARITY_TIMEOUT increase
-    # (12 min watchdog × 2 retries = 24 min + overhead).
-    timeout-minutes: 30
+    # M21: bumped from 30 → 50 to match parity.spec.js PARITY_TIMEOUT increase
+    # (20 min watchdog × 2 retries = 40 min + 10 min buffer for npm/playwright
+    # install + URL resolution polling). May 2026 cron failures (runs #25595*,
+    # #25623*, #25662*) hit the 11.5-min watchdog on both attempt and retry;
+    # PR-time runs of the same code complete in ~4 min, so this is GH-Actions
+    # cron-slot variance, not a chess4D-OC regression.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 

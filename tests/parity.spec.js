@@ -13,13 +13,22 @@ import { getPreviewUrl } from './smoke-helpers.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// M20 bump: chess-spectral 1.12.0 adds BIP-hybrid encoder modules; micropip
-// install + Pyodide cold-boot against the production CF URL now takes ~5-7 min.
-// Old 5-min watchdog hit exactly on both attempt and retry in the 2026-05-08
-// cron run (run #25543052493 — both hits at exactly 4.5 min = PARITY_TIMEOUT
-// - 30_000). No correctness diff was found; purely a timing budget issue.
-// 12 min gives adequate headroom; job timeout-minutes was bumped to 30 to match.
-const PARITY_TIMEOUT = 12 * 60_000;
+// Parity watchdog history:
+//   M3.5 default:  5 min
+//   PR #104 (M20): 12 min — chess-spectral 1.12.0 micropip install grew past 4.5min
+//   PR #109 (M21+): 20 min — see below
+//
+// 2026-05-09/10/11 cron runs hit the 11.5-min waitForFunction watchdog on
+// BOTH attempt and retry (runs #25595867887, #25623631894, #25662325469).
+// PR-time runs of the SAME code complete in ~4 min (PR #107 ran parity in
+// 4m17s). The 5× discrepancy is GH-Actions runner allocation + CF + PyPI
+// variance at the cron slot — not a chess4D-OC regression. Bumping to 20 min
+// for the watchdog (with job timeout-minutes 50 = 20×2 + 10 buffer).
+//
+// Also added: diagnostic console probe in parity.html logs the time when
+// __SMOKE_READY__ fires + a heartbeat every 30s during the parity scan, so
+// future timeouts will show in the playwright trace what stage they're at.
+const PARITY_TIMEOUT = 20 * 60_000;
 const SKIPPED_FAILS_TEST = false;
 
 test.describe('Parity', () => {
@@ -34,9 +43,30 @@ test.describe('Parity', () => {
 
     await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
 
-    await page.waitForFunction(() => window.__PARITY_DONE__ === true, null, {
-      timeout: PARITY_TIMEOUT - 30_000,
-    });
+    // If the watchdog fires, capture the parity stage + bridge log so the CI
+    // log shows what phase the harness was stuck at. The diagnostic only
+    // runs on timeout; happy-path runs skip it.
+    try {
+      await page.waitForFunction(() => window.__PARITY_DONE__ === true, null, {
+        timeout: PARITY_TIMEOUT - 30_000,
+      });
+    } catch (waitErr) {
+      try {
+        const diag = await page.evaluate(() => ({
+          stage:        window.__PARITY_STAGE__ || 'unknown',
+          smokeReady:   !!window.__SMOKE_READY__,
+          inflight:     window.__BRIDGE_INFLIGHT__
+            ? Array.from(window.__BRIDGE_INFLIGHT__.values()).map(e => ({ method: e.method, ageSec: Math.round((Date.now() - e.t0) / 1000) }))
+            : null,
+          bridgeLogLen: window.__BRIDGE_LOG__ ? window.__BRIDGE_LOG__.length : 0,
+          lastBridgeFails: window.__BRIDGE_LOG__
+            ? window.__BRIDGE_LOG__.filter(e => !e.ok).slice(-5).map(e => `${e.method}:${e.errorName}`)
+            : null,
+        }));
+        console.log('[parity-timeout-diag]', JSON.stringify(diag));
+      } catch (_) { /* page may already be in a bad state */ }
+      throw waitErr;
+    }
 
     const results = await page.evaluate(() => window.__PARITY_RESULTS__);
     expect(results, 'window.__PARITY_RESULTS__ should be populated').toBeTruthy();

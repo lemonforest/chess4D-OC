@@ -267,17 +267,48 @@
     $('btn-download').addEventListener('click', downloadResults);
 
     // Wait for the bridge to be ready, then enable Run.
+    // Heartbeat diagnostic: log every 15s with the elapsed time + current
+    // stage so when the test times out, the Playwright trace shows what
+    // phase was active. Greppable [parity-heartbeat] tag for CI log scans.
+    (function startHeartbeat() {
+      const start = Date.now();
+      window.__PARITY_STAGE__ = 'boot';
+      setInterval(function () {
+        if (window.__PARITY_DONE__) return;
+        const sec = Math.round((Date.now() - start) / 1000);
+        const stage = window.__PARITY_STAGE__ || 'unknown';
+        const smokeReady = !!window.__SMOKE_READY__;
+        const bridgeInflight = window.__BRIDGE_INFLIGHT__
+          ? Array.from(window.__BRIDGE_INFLIGHT__.values()).map(e => e.method).join(',')
+          : 'n/a';
+        const bridgeLogLen = window.__BRIDGE_LOG__ ? window.__BRIDGE_LOG__.length : 0;
+        console.log(
+          `[parity-heartbeat] t=${sec}s stage=${stage} smokeReady=${smokeReady} ` +
+          `inflight=[${bridgeInflight}] bridgeLogLen=${bridgeLogLen}`
+        );
+      }, 15_000);
+    })();
+
     (async () => {
       try {
+        window.__PARITY_STAGE__ = 'bridge-init';
+        const initT0 = Date.now();
         await SpectralBridge.init();
+        console.log(`[parity] SpectralBridge.init resolved after ${Date.now() - initT0}ms`);
+        window.__PARITY_STAGE__ = 'ready-to-run';
         setStatus('Pyodide ready. Click "Run parity" to compare engines.', 'ok');
         $('btn-run').disabled = false;
         // Auto-run for headless test environments — Playwright will pick
         // up window.__PARITY_DONE__ instead of waiting for the click.
         if (new URLSearchParams(location.search).get('auto') === '1') {
+          window.__PARITY_STAGE__ = 'running-parity';
+          const runT0 = Date.now();
           await runParity();
+          console.log(`[parity] runParity completed after ${Date.now() - runT0}ms`);
+          window.__PARITY_STAGE__ = 'complete';
         }
       } catch (err) {
+        window.__PARITY_STAGE__ = 'error: ' + err.message;
         setStatus(`Bridge init failed: ${err.message}`, 'err');
       }
     })();
