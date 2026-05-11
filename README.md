@@ -13,7 +13,7 @@ This project implements a complete framework for four-dimensional chess, extendi
 - **Interactive 3D visualization** rendering all 64 (z,w)-slices simultaneously
 - **Generalized chess rules** including castling, en passant, and promotion adapted for 4D
 
-This implementation is based on the research paper: *"A Mathematical Framework for Four-Dimensional Chess"* by Rinaldi (Unciuleanu) Oana and Costin-Gabriel Chiru.
+This implementation is based on the research paper: *"A Mathematical Framework for Four-Dimensional Chess"* by Oana Rinaldi-Unciuleanu and Costin-Gabriel Chiru.
 
 **Live Demos**
 
@@ -192,7 +192,7 @@ For each piece, `P_piece(φ)` returns the set of phase values reachable from the
 | **Queen** | `P_queen(φ) = P_rook(φ) ∪ P_bishop(φ)` | Up to **56 + 168 = 224** disjoint phase shifts (no overlap of direction sets) |
 | **King** | `P_king(φ) = { φ + Σᵢ εᵢ·gᵢ : ε ∈ {-1,0,+1}⁴ \ {0} }` | **80 directional shifts** (3⁴ − 1 ternary sign vectors), used at k=1 |
 | **Knight** | `P_knight(φ) = { φ + 2·gᵢ + gⱼ : i ≠ j, signs ∈ ±2 × ±1 }` | **48 shifts** (12 ordered axis pairs × 4 sign combos), leaper at k=1 only |
-| **Pawn (white, axis r)** | Forward push: `φ + g_r` (also `+2g_r` from starting rank); diagonal captures: `φ ± g_x + g_r` | r ∈ {y, w} only, never z; per Oana & Chiru §3.10 Def 13 |
+| **Pawn (white, axis r)** | Forward push: `φ + g_r` (also `+2g_r` from starting rank); diagonal captures: `φ ± g_x + g_r` | r ∈ {y, w} only, never z; per Rinaldi-Unciuleanu & Chiru §3.10 Def 13 |
 | **Pawn (black, axis r)** | Same with `-g_r` instead of `+g_r` | |
 
 #### Why It Works
@@ -447,7 +447,7 @@ This implementation validates several theoretical results:
 This implementation accompanies the research paper:
 
 > **"A Mathematical Framework for Four-Dimensional Chess"**  
-> Rinaldi (Unciuleanu) Oana, Costin-Gabriel Chiru  
+> Rinaldi-Unciuleanu, Oana; Chiru, Costin-Gabriel  
 > Department of Computer Science, National University of Science and Technology POLITEHNICA Bucharest
 
 The paper provides:
@@ -529,13 +529,13 @@ Beyond gameplay, this framework serves as:
 
 This project is for personal and educational use.
 
-> **Fork note (chess4D-OC):** the fork is licensed MIT — see [LICENSE](LICENSE) (dual copyright preserving Rinaldi (Unciuleanu) Oana for the upstream and Steven Kirkland for fork additions). [`chess-spectral`](https://pypi.org/project/chess-spectral/) (GPL-3.0-or-later) is loaded at runtime from PyPI by the user's browser via Pyodide micropip — never bundled. See [NOTICE](NOTICE) for the full runtime-aggregation licensing posture.
+> **Fork note (chess4D-OC):** the fork is licensed MIT — see [LICENSE](LICENSE) (dual copyright preserving Oana Rinaldi-Unciuleanu for the upstream and Steven Kirkland for fork additions). [`chess-spectral`](https://pypi.org/project/chess-spectral/) (GPL-3.0-or-later) is loaded at runtime from PyPI by the user's browser via Pyodide micropip — never bundled. See [NOTICE](NOTICE) for the full runtime-aggregation licensing posture. (Note: the "-OC" in chess4D-OC was a naming-order error; "Oana" is the first name, "Rinaldi-Unciuleanu" the family name — short cite is "Rinaldi-Unciuleanu & Chiru" or "RU_C". The "-OC" suffix is preserved as the historical project handle.)
 
 ---
 
 ## 👥 Authors
 
-**Oana Rinaldi (Unciuleanu)** - Concept, mathematical framework, and specifications  
+**Oana Rinaldi-Unciuleanu** - Concept, mathematical framework, and specifications  
 **Costin-Gabriel Chiru** - Academic supervision and mathematical contributions  
 **AI Assistant** - Implementation and code development
 

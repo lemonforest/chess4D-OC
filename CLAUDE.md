@@ -111,7 +111,8 @@ After M3.5: parity harness runs JS-vs-Python move-set diff for a 30-position cor
 ## Lineage and credits
 
 - Upstream: [oanaunc/4d_chess](https://github.com/oanaunc/4d_chess) (MIT)
-- Research paper: "A Mathematical Framework for Four-Dimensional Chess" by Rinaldi (Unciuleanu) Oana and Costin-Gabriel Chiru
+- Research paper: "A Mathematical Framework for Four-Dimensional Chess" by Oana Rinaldi-Unciuleanu and Costin-Gabriel Chiru
+  (Note: the upstream GitHub handle `oanaunc` and the legacy PyPI package name `python-chess4d-oana-chiru` use "Oana" — Oana is the FIRST name; the family name is the compound "Rinaldi-Unciuleanu". The chess4D-OC project's "-OC" suffix was an error of ordering; correct short cite is "Rinaldi-Unciuleanu & Chiru" or "RU_C".)
 - chess-spectral: [lemonforest/chess-spectral](https://github.com/lemonforest/chess-spectral) (GPL-3.0-or-later)
 - python-chess4d-oana-chiru: PyPI (Unlicense)
 
